@@ -44,6 +44,7 @@
 "ConnectionStrings": {
   "DefaultConnection": "Server=localhost,1433;Database=OrdersDb;User Id=sa;Password=YourPassword123!;TrustServerCertificate=True;"
 }
+
 ### 3. Запуск застосунку
 У терміналі виконайте:
 dotnet run --project Orders.Api
