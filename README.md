@@ -1,50 +1,75 @@
-# MicroservicesLab — Orders Vertical Slice API
+# Platform — Orders Service
 
-Навчальний мікросервіс управління замовленнями (**Orders Service**), реалізований у рамках Практичної роботи №2 з дисципліни «Розробка мікросервісної архітектури».
+Навчальний мікросервіс управління замовленнями (Лабораторна №2, «Розробка мікросервісної архітектури»).
 
-Проєкт побудовано за принципами **Vertical Slice Architecture** та паттерну **Unit of Work / Repository**.
+## Опис домену
 
----
+Сервіс **Orders** керує клієнтами, товарами та замовленнями. Замовлення створюється в одній транзакції: запис замовлення (репозиторій замовлень) і списання товару зі складу (репозиторій товарів). Якщо товару не вистачає, транзакція відкочується і замовлення не зберігається. Нове замовлення можна підтвердити, повторне підтвердження повертає конфлікт.
 
-## 🛠 Технологічний стек
+## Технології
 
-* **Платформа:** .NET 9 / C# 13
-* **API Framework:** ASP.NET Core Web API, Swagger / OpenAPI
-* **Data Access Layer (DAL):** ADO.NET (`Microsoft.Data.SqlClient`), Dapper
-* **Обробка помилок:** Middleware з підтримкою стандарту `ProblemDetails` (RFC 7807)
-* **Мапінг об'єктів:** AutoMapper
-* **База даних:** MS SQL Server (у Docker або локально)
+.NET 9, ASP.NET Core Web API, Swagger, ADO.NET (`Microsoft.Data.SqlClient`), Dapper, AutoMapper, MS SQL Server, .NET Aspire.
 
----
+## Структура
 
-## 🏛 Архітектура проєкту
+```
+Platform.slnx
+Platform.AppHost/           оркестрація Aspire (API + SQL Server)
+Services/Orders/
+  Orders.Domain/            моделі, доменні винятки
+  Orders.Dal/               IGenericRepository<T>, BaseDapperRepository<T>, репозиторії, Unit of Work
+  Orders.Bll/               сервіси, DTO, AutoMapper, бізнес-валідація
+  Orders.Api/               контролери, middleware з ProblemDetails, Program.cs
+```
 
-Проєкт розділено на чіткі шари відповідно до вертикального зрізу:
+Архітектура: **Api → Bll → Dal → Domain**. Репозиторії: `CustomerRepository` на чистому ADO.NET, `ProductRepository` і `OrderRepository` на Dapper (спільна база `BaseDapperRepository<T>`). Unit of Work тримає одне з'єднання й одну транзакцію для всіх репозиторіїв.
 
-1. **`Orders.Domain`** — Доменні моделі (`Order`, `OrderItem`, `Customer`, `Product`), переліки (`OrderStatus`) та спеціалізовані винятки (`NotFoundException`, `BusinessValidationException`).
-2. **`Orders.Dal`** — Шар доступу до даних:
-   * **`CustomerRepository`** — реалізація на чистому **ADO.NET**.
-   * **`ProductRepository`** та **`OrderRepository`** — реалізації з використанням **Dapper**.
-   * **`UnitOfWork`** — управління транзакціями SQL та єдина точка доступу до репозиторіїв.
-   * **`DbInitializer`** — автоматичне створення бази даних, схеми таблиць та заповнення початковими даними (Seed Data).
-3. **`Orders.Bll`** — Бізнес-логіка: DTOs (`CreateOrderDto`, `OrderDto`), профілі `AutoMapper` та `OrderService`, що забезпечує валідацію інваріантів і створення замовлень у транзакції.
-4. **`Orders.Api`** — Web API: тонкий контролер `OrdersController`, реєстрація залежностей (DI) та `ExceptionHandlingMiddleware` для форматування помилок.
+## Запуск через Aspire
 
----
+Потрібні .NET 9 SDK і запущений Docker Desktop.
 
-## 🚀 Інструкція із запуску
+```bash
+dotnet run --project Platform.AppHost
+```
 
-### 1. Передумови
-* Встановлений **.NET 9 SDK**.
-* Запущений **MS SQL Server** (наприклад, через Docker-контейнер на порту `1433`).
+Відкрийте посилання на Dashboard із консолі. Ресурси `sql`, `OrdersDb` і `orders-api` мають мати статус **Running**. Swagger: `https://localhost:7125/swagger`.
 
-### 2. Конфігурація підключення
-Перевірте рядок підключення у файлі `Orders.Api/appsettings.json`:
+## Розгортання БД
+
+Окремих дій не потрібно. Під час старту `orders-api` виконується `DbInitializer`: він створює базу `OrdersDb`, таблиці, колонку `Stock` і початкові дані. Повторний запуск дублікатів не створює.
+
+## Помилки
+
+Усі помилки повертаються у форматі ProblemDetails (RFC 7807).
+
+| Виняток | HTTP-статус |
+|---|---|
+| `NotFoundException` | 404 |
+| `BusinessValidationException`, помилки DataAnnotations | 400 |
+| `BusinessConflictException` | 409 |
+
+## Приклади запитів
+
+1. Створити клієнта зі спецсимволом: `POST /api/customers`
 ```json
-"ConnectionStrings": {
-  "DefaultConnection": "Server=localhost,1433;Database=OrdersDb;User Id=sa;Password=YourPassword123!;TrustServerCertificate=True;"
-}
+   { "name": "O'Brien", "email": "obrien@example.com" }
+```
+   Очікується **201**.
+2. Створити замовлення: `POST /api/orders`
+```json
+   {
+     "customerId": "11111111-1111-1111-1111-111111111111",
+     "items": [ { "productId": "22222222-2222-2222-2222-222222222222", "quantity": 2 } ]
+   }
+```
+   Очікується **201**.
+3. Відкат транзакції: той самий запит із `"quantity": 999`. Очікується **409**; замовлення в БД не з'являється, склад не змінюється.
+4. Підтвердити замовлення: `POST /api/orders/{id}/confirm` → **200**; повторний виклик → **409**.
+5. Неіснуючий Id: `GET /api/orders/00000000-0000-0000-0000-000000000001` → **404**.
 
-### 3. Запуск застосунку
-У терміналі виконайте:
-dotnet run --project Orders.Api
+## Таблиця дублювання даних
+
+| Поле | Де зберігається | Джерело | Політика |
+|---|---|---|---|
+| `OrderItems.UnitPrice` | `OrderItems` | `Products.Price` на момент замовлення | Незмінний знімок, пізніше не оновлюється |
+| `Orders.TotalAmount` | `Orders` | Сума `Quantity × UnitPrice` по позиціях | Обчислюється при створенні замовлення |
