@@ -14,9 +14,7 @@ public class OrdersController : ControllerBase
         _orderService = orderService;
     }
 
-    /// <summary>
-    /// Отримати замовлення за ID
-    /// </summary>
+    /// <summary>Отримати замовлення за ID</summary>
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(OrderDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -26,16 +24,26 @@ public class OrdersController : ControllerBase
         return Ok(order);
     }
 
-    /// <summary>
-    /// Створити нове замовлення
-    /// </summary>
+    /// <summary>Створити нове замовлення</summary>
     [HttpPost]
     [ProducesResponseType(typeof(OrderDto), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Create([FromBody] CreateOrderDto dto)
     {
         var createdOrder = await _orderService.CreateOrderAsync(dto);
         return CreatedAtAction(nameof(GetById), new { id = createdOrder.Id }, createdOrder);
+    }
+
+    /// <summary>Підтвердити замовлення</summary>
+    [HttpPost("{id:guid}/confirm")]
+    [ProducesResponseType(typeof(OrderDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Confirm(Guid id)
+    {
+        var order = await _orderService.ConfirmOrderAsync(id);
+        return Ok(order);
     }
 }

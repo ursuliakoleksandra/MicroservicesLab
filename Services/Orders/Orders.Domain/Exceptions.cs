@@ -9,3 +9,8 @@ public class BusinessValidationException : Exception
 {
     public BusinessValidationException(string message) : base(message) { }
 }
+
+public class BusinessConflictException : Exception
+{
+    public BusinessConflictException(string message) : base(message) { }
+}

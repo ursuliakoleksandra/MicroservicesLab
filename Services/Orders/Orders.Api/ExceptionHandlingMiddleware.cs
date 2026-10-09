@@ -52,6 +52,13 @@ public class ExceptionHandlingMiddleware
                 problemDetails.Title = "Помилка бізнес-валідації";
                 problemDetails.Detail = ex.Message;
                 break;
+            
+            case BusinessConflictException ex:
+                context.Response.StatusCode = (int)HttpStatusCode.Conflict;
+                problemDetails.Status = (int)HttpStatusCode.Conflict;
+                problemDetails.Title = "Конфлікт стану ресурсу";
+                problemDetails.Detail = ex.Message;
+                break;
 
             default:
                 context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;

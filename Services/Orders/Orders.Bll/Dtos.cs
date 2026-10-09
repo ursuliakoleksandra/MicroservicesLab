@@ -1,10 +1,13 @@
-﻿using Orders.Domain;
+﻿using System.ComponentModel.DataAnnotations;
+using Orders.Domain;
 
 namespace Orders.Bll;
 
 public class CreateOrderItemDto
 {
     public Guid ProductId { get; set; }
+
+    [Range(1, int.MaxValue, ErrorMessage = "Кількість має бути більшою за 0.")]
     public int Quantity { get; set; }
 }
 
@@ -30,4 +33,20 @@ public class OrderDto
     public decimal TotalAmount { get; set; }
     public OrderStatus Status { get; set; }
     public List<OrderItemDto> Items { get; set; } = new();
+}
+
+public class CreateCustomerDto
+{
+    [Required, StringLength(100)]
+    public string Name { get; set; } = string.Empty;
+
+    [Required, EmailAddress, StringLength(100)]
+    public string Email { get; set; } = string.Empty;
+}
+
+public class CustomerDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
 }

@@ -17,5 +17,9 @@ public class MappingProfile : Profile
 
         CreateMap<CreateOrderItemDto, OrderItem>()
             .ForMember(dest => dest.Id, opt => opt.MapFrom(_ => Guid.NewGuid()));
+
+        CreateMap<Customer, CustomerDto>();
+        CreateMap<CreateCustomerDto, Customer>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(_ => Guid.NewGuid()));
     }
 }

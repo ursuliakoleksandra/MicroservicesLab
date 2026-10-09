@@ -3,7 +3,7 @@
 public enum OrderStatus
 {
     New = 1,
-    Processing = 2,
+    Confirmed = 2,
     Completed = 3,
     Cancelled = 4
 }
@@ -32,4 +32,12 @@ public class Customer
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
+}
+
+public class Product
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public int Stock { get; set; }
 }
