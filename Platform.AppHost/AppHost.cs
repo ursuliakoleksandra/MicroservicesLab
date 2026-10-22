@@ -15,4 +15,11 @@ var ordersDb = builder.AddConnectionString("OrdersDb");
 builder.AddProject<Projects.Orders_Api>("orders-api")
        .WithReference(ordersDb);
 
+// Сервіс «Каталог» (Лаб. 03, EF Core): схему створюють міграції, тому БД CatalogDb має бути НЕ створена скриптами Лаб. 01
+// (або порожня). Варіант 2: builder.AddSqlServer("sql").WithDataVolume().AddDatabase("CatalogDb") — міграції застосуються самі.
+var catalogDb = builder.AddConnectionString("CatalogDb");
+
+builder.AddProject<Projects.Catalog_Api>("catalog-api")
+       .WithReference(catalogDb);
+
 builder.Build().Run();

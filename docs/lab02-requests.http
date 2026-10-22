@@ -1,0 +1,108 @@
+### Лаб. 02 — приклади запитів (VS Code REST Client / Visual Studio / Rider)
+### Змініть host на адресу з Aspire Dashboard (ресурс orders-api) або http://localhost:5080 при запуску без Aspire
+@host = http://localhost:5080
+
+### 1. Клієнти: список, один, створення (201 + Location), дублікат email (409), O'Brien (спецсимвол)
+GET {{host}}/api/customers?page=1&pageSize=10
+
+###
+GET {{host}}/api/customers/1
+
+###
+POST {{host}}/api/customers
+Content-Type: application/json
+
+{ "email": "patrick.obrien@example.com", "fullName": "Patrick O'Brien", "phone": "+380501234567" }
+
+###
+POST {{host}}/api/customers
+Content-Type: application/json
+
+{ "email": "patrick.obrien@example.com", "fullName": "Duplicate", "phone": null }
+
+### 2. Довідник товарів (локальна копія Каталогу)
+GET {{host}}/api/products
+
+###
+GET {{host}}/api/products/1
+
+### 3. Створення замовлення (на свіжій БД після seed це буде замовлення Id = 4) (201 + Location; назва й ціна беруться як знімок)
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": 1,
+  "shippingAddress": "Чернівці, вул. Руська, 10",
+  "comment": "Подзвонити перед доставкою",
+  "items": [ { "productId": 3, "units": 2 }, { "productId": 4, "units": 1 } ]
+}
+
+### 4. Читання, список клієнта з фільтром і пагінацією, історія статусів
+GET {{host}}/api/orders/2
+
+###
+GET {{host}}/api/orders?customerId=1&status=Paid&page=1&pageSize=5
+
+###
+GET {{host}}/api/orders/2/history
+
+### 5. Недопустимий перехід: відвантажити неоплачене -> 409 ProblemDetails
+POST {{host}}/api/orders/2/ship
+
+### 6. Транзакційне підтвердження (статус + залишки) -> 204
+POST {{host}}/api/orders/2/confirm
+
+### 7. Повторне підтвердження -> 409; неіснуючий Id -> 404; некоректний запит -> 400
+POST {{host}}/api/orders/2/confirm
+
+###
+POST {{host}}/api/orders/999999/confirm
+
+###
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "customerId": 0, "shippingAddress": "", "items": [] }
+
+### 8. ВІДКАТ: замовлення з товаром, якого не вистачає (товар 5 має залишок 5, замовляємо 6)
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "customerId": 2, "shippingAddress": "Київ, просп. Науки, 1",
+  "items": [ { "productId": 4, "units": 1 }, { "productId": 5, "units": 6 } ] }
+
+### підтвердіть щойно створене замовлення (тут Id = 5; перевірте в відповіді POST) -> 409 "Insufficient stock"; статус лишається Submitted, залишок товару 4 не змінився
+POST {{host}}/api/orders/5/confirm
+
+###
+GET {{host}}/api/orders/5
+
+###
+GET {{host}}/api/products
+
+### 9. Оплата і відвантаження
+POST {{host}}/api/orders/2/pay
+Content-Type: application/json
+
+{ "paymentMethod": "Card" }
+
+###
+POST {{host}}/api/orders/2/ship
+
+### 10. Оптимістична конкурентність: візьміть rowVersion із GET /api/orders/{id}
+PUT {{host}}/api/orders/4/details
+Content-Type: application/json
+
+{ "shippingAddress": "Нова адреса, 5", "comment": "змінено", "rowVersion": "<значення з GET>" }
+
+### 11. Скасування (лише до оплати) і м'яке видалення
+POST {{host}}/api/orders/4/cancel
+
+###
+DELETE {{host}}/api/orders/4
+
+### 12. Синхронізація копії товару з Каталогу (імітація події)
+PUT {{host}}/api/products/1
+Content-Type: application/json
+
+{ "name": "Ноутбук X15", "price": 33999.00, "isActive": true, "stock": 10 }
