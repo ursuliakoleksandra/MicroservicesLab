@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Api бачить лише BLL (контролери); Dal підключено тільки для реєстрації Unit of Work у DI (composition root) -->
+    <ProjectReference Include="..\Orders.Bll\Orders.Bll.csproj" />
+    <ProjectReference Include="..\Orders.Dal\Orders.Dal.csproj" />
+    <ProjectReference Include="..\Orders.Domain\Orders.Domain.csproj" />
+  </ItemGroup>
+</Project>
