@@ -22,4 +22,12 @@ var catalogDb = builder.AddConnectionString("CatalogDb");
 builder.AddProject<Projects.Catalog_Api>("catalog-api")
        .WithReference(catalogDb);
 
+// Сервіс «Відгуки» (Лаб. 04, Clean Architecture + MongoDB). Рядок підключення "ReviewsDb" — у appsettings.json AppHost;
+// Reviews.Infrastructure віддає йому пріоритет над секцією MongoDb. Варіант 2 (MongoDB у контейнері):
+// var reviewsDb = builder.AddMongoDB("mongo").WithDataVolume().AddDatabase("ReviewsDb");  // потрібен пакет Aspire.Hosting.MongoDB
+var reviewsDb = builder.AddConnectionString("ReviewsDb");
+
+builder.AddProject<Projects.Reviews_WebApi>("reviews-webapi")
+       .WithReference(reviewsDb);
+
 builder.Build().Run();

@@ -72,8 +72,13 @@ CREATE TABLE dbo.Products (
     Name     NVARCHAR(200) NOT NULL,                                -- копія, оновлюється подіями з Каталогу
     Price    DECIMAL(18,2) NOT NULL CONSTRAINT CK_Products_Price CHECK (Price > 0),
     IsActive BIT NOT NULL CONSTRAINT DF_Products_IsActive DEFAULT 1,
-    SyncedAt DATETIME2 NOT NULL CONSTRAINT DF_Products_SyncedAt DEFAULT SYSUTCDATETIME()
+    SyncedAt DATETIME2 NOT NULL CONSTRAINT DF_Products_SyncedAt DEFAULT SYSUTCDATETIME(),
+    Stock    INT NOT NULL CONSTRAINT DF_Products_Stock DEFAULT 0 CONSTRAINT CK_Products_Stock CHECK (Stock >= 0) -- доступний залишок для замовлень (Лаб. 02)
 );
+GO
+-- міграція для баз, створених за схемою Лаб. 01 (до додавання Stock)
+IF COL_LENGTH(N'dbo.Products', N'Stock') IS NULL
+    ALTER TABLE dbo.Products ADD Stock INT NOT NULL CONSTRAINT DF_Products_Stock DEFAULT 0 CONSTRAINT CK_Products_Stock CHECK (Stock >= 0);
 GO
 
 /* ---------- OrderItems: M:N  Orders <-> Products ---------- */

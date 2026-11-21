@@ -5,6 +5,7 @@
 | № 01 | Три бази даних для мікросервісів (SQL Server ×2 + MongoDB), політика дублювання | [Частина 1](#частина-1--три-бази-даних-лаб-01) |
 | № 02 | Мікросервіс «Замовлення»: DAL → BLL → Web/API (ADO.NET + Dapper), Unit of Work, Aspire | [Частина 2](#частина-2--мікросервіс-замовлення-лаб-02) |
 | № 03 | Мікросервіс «Каталог» на EF Core: Code First, Fluent API, міграції, специфікації, пагінація | [Частина 3](#частина-3--мікросервіс-каталог-на-ef-core-лаб-03) |
+| № 04 | Мікросервіс «Відгуки»: Clean Architecture, CQRS/MediatR, Value Objects, MongoDB | [Частина 4](#частина-4--мікросервіс-відгуки-clean-architecture--mongodb-лаб-04) |
 
 # Частина 1 — три бази даних (Лаб. 01)
 
@@ -54,6 +55,12 @@ Services/Catalog/          мікросервіс «Каталог» (Проєк
     Catalog.Dal/           DbContext, Configurations/, Migrations/, репозиторії, специфікації, UoW, сідінг
     Catalog.Domain/        сутності з бізнес-правилами, доменні винятки
     Catalog.Tests/         unit-тести (домен, сервіси, специфікації на InMemory)
+Services/Reviews/          мікросервіс «Відгуки» (Проєкт №3, Clean Architecture + CQRS + MongoDB)
+    Reviews.Domain/        сутності, value objects, винятки, інтерфейси репозиторіїв (без залежностей)
+    Reviews.Application/   Commands/, Queries/, Behaviors/, DTO, профілі AutoMapper, валідатори
+    Reviews.Infrastructure/ MongoDbContext, BSON-мапінг, репозиторії, read-запити, сідінг, індекси
+    Reviews.WebApi/        контролери (лише ISender), Program.cs, обробка помилок
+    Reviews.Tests/         unit-тести (домен, BSON-мапінг, MediatR pipeline, архітектура)
 ```
 
 ## 3. Розгортання з нуля
@@ -691,3 +698,157 @@ curl -s "$API/api/products/low-stock?threshold=10"
 | Глобальна обробка помилок ProblemDetails | `ErrorHandling/ApiExceptionHandler.cs` |
 | Serilog зі структурованими властивостями | `Program.cs`, `appsettings*.json`, `RequestLogContextMiddleware` |
 | Specification pattern | `Catalog.Dal/Specifications` |
+
+---
+
+# Частина 4 — мікросервіс «Відгуки»: Clean Architecture + MongoDB (Лаб. 04)
+
+Мікросервіс `Services/Reviews` працює з MongoDB-базою `ReviewsDb` Проєкту №3 (Лаб. 01) і побудований за **Clean Architecture**: чотири шари, домен без зовнішніх залежностей, **CQRS** через **MediatR**, **Value Objects**, наскрізна валідація в **Pipeline Behaviors**, BSON-мапінг через `BsonClassMap` (без атрибутів у домені), оптимістична конкурентність за версією документа, ідемпотентний сідінг і автоматичні індекси.
+
+## 24. Шари та правило залежностей
+
+```mermaid
+flowchart TD
+    W["Reviews.WebApi<br/>контролери (ISender), Program.cs, ProblemDetails"]
+    I["Reviews.Infrastructure<br/>MongoDbContext, BsonClassMap, репозиторії, read-запити, сідінг, індекси"]
+    A["Reviews.Application<br/>Commands, Queries, Behaviors, DTO, AutoMapper"]
+    D["Reviews.Domain<br/>сутності, Value Objects, винятки, інтерфейси"]
+    W --> A
+    W -. "лише DI-реєстрація" .-> I
+    I -. "реалізує інтерфейси" .-> A
+    I -. "реалізує інтерфейси" .-> D
+    A --> D
+```
+
+| Проєкт | Посилається на | NuGet |
+|--------|----------------|-------|
+| `Reviews.Domain` | **нічого** | `MongoDB.Bson` (лише `ObjectId`, без драйвера) |
+| `Reviews.Application` | Domain | `MediatR`, `FluentValidation`, `FluentValidation.DependencyInjectionExtensions`, `AutoMapper` |
+| `Reviews.Infrastructure` | Application, Domain | `MongoDB.Driver`, `MongoDB.Bson`, `Microsoft.Extensions.Options.ConfigurationExtensions` |
+| `Reviews.WebApi` | Application, Infrastructure | `Swashbuckle.AspNetCore`, `Serilog.AspNetCore` |
+
+Жоден контролер і жоден обробник з Application не звертається до `IMongoCollection` напряму: запис іде через `IReviewRepository` (Domain), читання — через `IReviewQueries` (Application); обидва реалізує Infrastructure. Це перевіряє `ArchitectureTests`.
+
+## 25. Domain
+
+* `BaseEntity` — `Id` (`ObjectId`), `CreatedAt`, `UpdatedAt`, `Version` (оптимістична конкурентність).
+* Сутності: **`Review`** (агрегат документа `reviews`), **`Discussion`** (колекція `discussions`), **`Comment`** (незмінний вкладений документ у масиві `comments`). Приватні setter-и, валідація в конструкторах і методах (`Edit`, `AddComment`, `AddPhotos`, `AttachVideo`, …), порушення правил — `DomainException`. Необов'язкові поля (`photos`, `pros`, `cons`, `videoUrl`, `verifiedPurchase`) відсутні в документі, якщо не задані, — гнучка схема з Лаб. 01.
+* Базовий `ValueObject` (рівність за значеннями, `GetEqualityComponents`) та незмінні VO: **`Author`** (`customerId` + знімок `displayName`), **`Rating`** (1…5, у БД — звичайне число), **`VerifiedPurchase`** (`orderId`). VO вбудовані в сутності як вкладені документи.
+* Інтерфейси репозиторіїв `IReviewRepository`, `IDiscussionRepository` — у Domain.
+
+## 26. Application: CQRS і Pipeline Behaviors
+
+| Тип | Операція | Обробник працює через |
+|-----|----------|-----------------------|
+| Command | `CreateReviewCommand` → id, `UpdateReviewCommand`, `DeleteReviewCommand`, `AddCommentCommand`, `CreateDiscussionCommand` | `IReviewRepository` / `IDiscussionRepository` |
+| Query | `GetReviewByIdQuery`, `GetReviewsListQuery` (пагінація, фільтр, текстовий пошук, сортування), `GetDiscussionByIdQuery` | `IReviewQueries` / `IDiscussionQueries` |
+
+Базові інтерфейси `ICommand`, `ICommand<T>`, `IQuery<T>`. `AddApplication()` реєструє MediatR зі скануванням збірки та behaviors у порядку **Logging (зовнішній) → Validation → Performance (біля обробника)** + валідатори `AddValidatorsFromAssembly`.
+
+* **ValidationBehavior** виконує всі валідатори FluentValidation, збирає всі помилки й кидає `ValidationException` — обробник **не викликається**. Валідатори перевіряють `ObjectId.TryParse`, діапазони, а `CreateReviewCommandValidator` має **асинхронне правило із запитом до MongoDB** (`ExistsAsync`): «You have already reviewed this product».
+* **LoggingBehavior** структуровано логує запити/відповіді; для відхилених валідацією запитів пише `handler was NOT invoked`. **PerformanceBehavior** попереджає про обробники довші за 500 мс.
+* AutoMapper (`ReviewProfile`): `ObjectId → string`, Value Objects → прості поля, вкладені масиви → списки DTO.
+
+## 27. Infrastructure: MongoDB
+
+* `MongoDbContext` (Singleton) створюється з `IOptions<MongoDbOptions>` (секція `MongoDb`) і дає `IMongoCollection<T>`.
+* `MongoMappings.Register()` (один раз при старті): `BsonClassMap` для сутностей і VO **без змін доменних класів** — camelCase-імена, приватні поля `_comments`, `_photos`, … , створення незмінних VO через конструктор (`MapCreator`), власні серіалізатори `Rating` (→ int) і `ReviewType` (→ `text | video | rating-only`).
+* `ReviewRepository`: `UpdateAsync`/`DeleteAsync` застосовуються лише до документа з очікуваною `version`, інакше `ConflictException` (409). Документи з Лаб. 01 без поля `version` вважаються версією 0.
+* `ReviewQueries` (read side): aggregation pipeline `$match` (`productId`, `rating`, `$text`) → `$sort` → `$skip` → `$limit` → `$project` одразу в DTO; кількість коментарів рахує `$size` у БД; `totalCount` — `CountDocuments`.
+* **Індекси** створює `IndexCreationService` (`IHostedService`) з тими самими іменами й параметрами, що в `db/p3/collections.js`: `ix_reviews_product_created` (`{productId, createdAt:-1}`), `ux_reviews_product_author` (унікальний), `ix_reviews_author`, `tx_reviews_text` (text), `ix_discussions_product_last`.
+* **Сідінг** — `IDataSeeder` (`DiscussionSeeder`, `ReviewSeeder`) + `DataSeedingService`: перед вставкою перевіряється наявність запису (за `productId` + автор / `productId` + назва), далі `InsertManyAsync`. Повторний запуск і запуск поверх даних Лаб. 01 дублікатів не створює. Вимикається ключем `Seeding:Enabled = false` (у `appsettings.Production.json`).
+* Конфігурація: `appsettings.json` / `.Development` / `.Staging` / `.Production`; пул і таймаути — у рядку підключення (`maxPoolSize`, `serverSelectionTimeoutMS`). Health check: `GET /health` (ping MongoDB).
+
+## 28. WebApi: ендпоінти та помилки
+
+| Метод і шлях | Команда / запит | Успіх | Помилки |
+|--------------|-----------------|-------|---------|
+| `GET /api/reviews?productId=&search=&minRating=&sortBy=&page=&pageSize=` | `GetReviewsListQuery` | 200 (`items`, `totalCount`, `page`, `pageSize`, `totalPages`, `hasNext`, `hasPrevious`) | 400 |
+| `GET /api/reviews/{id}` | `GetReviewByIdQuery` | 200 + `ETag` (версія) | 400, 404 |
+| `POST /api/reviews` | `CreateReviewCommand` | **201** + `Location` із рядковим ObjectId | 400, 409 |
+| `PUT /api/reviews/{id}` (`If-Match`) | `UpdateReviewCommand` | 200 + новий `ETag` | 400, 404, 409 |
+| `POST /api/reviews/{id}/comments` | `AddCommentCommand` | 201 | 400, 404, 409 |
+| `DELETE /api/reviews/{id}` (`If-Match`) | `DeleteReviewCommand` | 204 | 400, 404, 409 |
+| `GET /api/discussions/{id}`, `POST /api/discussions` | запит / команда | 200 / 201 | 400, 404 |
+
+| Виняток | HTTP |
+|---------|------|
+| `NotFoundException` | **404** |
+| `ValidationException` (FluentValidation; `ValidationProblemDetails` з помилками по полях), `DomainException` | **400** |
+| `ConflictException` (конфлікт версій), `MongoWriteException` з `DuplicateKey` | **409** |
+| інші `MongoWriteException` | 400 |
+| `MongoConnectionException`, `TimeoutException` (сервер недоступний) | **503** |
+| інше | 500 (деталі — лише в Development) |
+
+Усе обробляє один `ApiExceptionHandler` (`IExceptionHandler` + `AddProblemDetails`); контролери — лише `ISender` (`ApiControllerBase`), Swagger на `/swagger`.
+
+## 29. Запуск і перевірка
+
+```bash
+docker run -d --name mongo -p 27017:27017 mongo:7                     # MongoDB
+mongosh "mongodb://localhost:27017" --file db/p3/collections.js       # (необов'язково) колекції + JSON Schema з Лаб. 01
+dotnet run --project Services/Reviews/Reviews.WebApi                  # http://localhost:5100/swagger  (або через Platform.AppHost)
+```
+
+`MediatR` і `AutoMapper` 15+/13+ потребують безкоштовного Community-ключа (`LuckyPenny:LicenseKey`, один ключ на обидва пакети); без нього застосунок працює, але пише попередження в лог.
+
+```bash
+API=http://localhost:5100
+
+curl -i "$API/api/reviews?productId=1&sortBy=rating&page=1&pageSize=5"     # пагінація й сортування в MongoDB
+curl -i "$API/api/reviews?search=екран"                                    # text-індекс ($text)
+
+curl -i -X POST $API/api/reviews -H "Content-Type: application/json" \
+  -d '{"productId":5,"productName":"Монітор 27\" QHD","authorId":1,"authorName":"Олена","rating":5,"text":"Яскравий екран"}'   # 201 + Location
+# повторити той самий запит -> 400 "You have already reviewed this product" (або 409 від унікального індексу)
+
+curl -i -X POST $API/api/reviews -H "Content-Type: application/json" \
+  -d '{"productId":5,"productName":"X","authorId":2,"authorName":"Андрій","rating":10,"text":"t"}'        # 400, обробник не викликається
+
+curl -i $API/api/reviews/not-an-id                    # 400 (ObjectId)
+curl -i $API/api/reviews/64b7f0c2a1b2c3d4e5f60718     # 404
+
+ID=<id з відповіді>
+curl -i $API/api/reviews/$ID                          # у заголовку ETag: "0"
+curl -i -X PUT $API/api/reviews/$ID -H "Content-Type: application/json" -H 'If-Match: "0"' -d '{"rating":4,"text":"Змінено"}'   # 200, ETag "1"
+curl -i -X PUT $API/api/reviews/$ID -H "Content-Type: application/json" -H 'If-Match: "0"' -d '{"rating":3,"text":"Застаріла версія"}'   # 409
+curl -i -X POST $API/api/reviews/$ID/comments -H "Content-Type: application/json" -d '{"authorName":"Андрій","text":"Згоден"}'   # 201
+```
+
+```javascript
+// mongosh: структура документів, індекси
+use ReviewsDb
+db.reviews.find().pretty()      // camelCase, вкладені author/comments, без внутрішніх полів .NET
+db.reviews.getIndexes()         // ix_reviews_product_created, ux_reviews_product_author, ix_reviews_author, tx_reviews_text
+```
+
+| Перевірка | Очікуваний результат |
+|-----------|----------------------|
+| `Reviews.Domain.csproj` | немає `ProjectReference` |
+| Створення `Review` з `Rating = 10` | `DomainException` без звернення до БД (unit-тест) |
+| `POST` з `rating = 10` | 400; у лозі `LoggingBehavior`: `rejected by validation ... handler was NOT invoked` |
+| Повторний відгук автора на товар | 400 (валідатор) або 409 (унікальний індекс), не 500 |
+| `PUT` зі старим `If-Match` | 409 |
+| Другий запуск застосунку | seed не дублюється; `db.reviews.countDocuments()` не змінюється |
+| `dotnet test Services/Reviews/Reviews.Tests` | усі тести зелені |
+
+**Знімки екрана для здачі:** Swagger; документ `reviews` у Compass; результат `db.reviews.getIndexes()`.
+
+## 30. Відповідність критеріям Лаб. 04
+
+| Критерій | Де |
+|----------|----|
+| Чотири шари з правильним напрямком залежностей | `Platform.slnx`, `*.csproj` |
+| Сутності з `BaseEntity` та інкапсуляцією | `Reviews.Domain/Common`, `Entities` |
+| `ValueObject` і незмінні Value Objects | `Reviews.Domain/Common/ValueObject.cs`, `ValueObjects/` |
+| Інтерфейси репозиторіїв у внутрішньому шарі | `Reviews.Domain/Interfaces`, `Reviews.Application/Common/Interfaces` |
+| Команди Create/Update/Delete з обробниками | `Reviews.Application/Reviews/Commands` |
+| Запити GetById/GetList через `IReviewQueries` | `Reviews.Application/Reviews/Queries`, `ReviewQueries` |
+| MediatR зі скануванням і порядком behaviors; DI-метод на кожен шар | `Reviews.Application/DependencyInjection.cs`, `Reviews.Infrastructure/DependencyInjection.cs` |
+| `ValidationBehavior` + валідатори (ObjectId, асинхронне правило) | `Common/Behaviors`, `*Validator` |
+| `LoggingBehavior`, `PerformanceBehavior` | `Reviews.Application/Common/Behaviors` |
+| `MongoDbContext` через `IOptions`, `BsonClassMap` без атрибутів | `Reviews.Infrastructure/Persistence` |
+| Репозиторій з оптимістичною конкурентністю | `ReviewRepository` |
+| Контролери через `ISender`, AutoMapper, Swagger | `Reviews.WebApi/Controllers`, `ReviewProfile` |
+| ProblemDetails із підтримкою MongoDB-винятків | `Reviews.WebApi/ErrorHandling/ApiExceptionHandler.cs` |
+| Ідемпотентний сідінг, індекси, конфігурація | `Reviews.Infrastructure/Seeding`, `appsettings*.json` |

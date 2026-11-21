@@ -18,15 +18,21 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Customers WHERE Email = N'iryna.shevchenko@exam
     INSERT INTO dbo.Customers (Email, FullName, Phone, CreatedBy) VALUES (N'iryna.shevchenko@example.com', N'Ірина Шевченко', NULL, N'seed');
 GO
 
-/* Локальна копія довідника Каталогу (ті самі Id, що в CatalogDb/db/p2/seed.sql) */
-INSERT INTO dbo.Products (Id, Name, Price)
-SELECT v.Id, v.Name, v.Price
-FROM (VALUES (1, N'Ноутбук X15',            32999.00),
-             (2, N'Смартфон S10',           18999.00),
-             (3, N'Навушники Air',           3499.00),
-             (4, N'Миша ігрова M7',          1299.00),
-             (5, N'Монітор 27" QHD',        11999.00)) AS v (Id, Name, Price)
+/* Локальна копія довідника Каталогу (ті самі Id, що в CatalogDb/db/p2/seed.sql) + початковий залишок */
+INSERT INTO dbo.Products (Id, Name, Price, Stock)
+SELECT v.Id, v.Name, v.Price, v.Stock
+FROM (VALUES (1, N'Ноутбук X15',            32999.00, 10),
+             (2, N'Смартфон S10',           18999.00, 25),
+             (3, N'Навушники Air',           3499.00, 50),
+             (4, N'Миша ігрова M7',          1299.00, 40),
+             (5, N'Монітор 27" QHD',        11999.00,  5)) AS v (Id, Name, Price, Stock)
 WHERE NOT EXISTS (SELECT 1 FROM dbo.Products p WHERE p.Id = v.Id);
+
+-- база зі схеми Лаб. 01: колонка Stock щойно з'явилась зі значенням 0 -> проставляємо початкові залишки (лише поки немає замовлень)
+UPDATE p SET p.Stock = v.Stock
+FROM dbo.Products p
+JOIN (VALUES (1, 10), (2, 25), (3, 50), (4, 40), (5, 5)) AS v (Id, Stock) ON v.Id = p.Id
+WHERE p.Stock = 0 AND NOT EXISTS (SELECT 1 FROM dbo.OrderItems);
 GO
 
 /* Замовлення створюються лише якщо їх ще немає (повторний запуск нічого не додає) */

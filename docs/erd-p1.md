@@ -43,6 +43,7 @@ erDiagram
         nvarchar Name "копія"
         decimal Price "CHECK > 0, копія"
         bit IsActive
+        int Stock "залишок для замовлень"
         datetime2 SyncedAt
     }
     ORDER_ITEMS {

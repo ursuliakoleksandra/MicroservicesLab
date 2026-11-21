@@ -3,5 +3,5 @@ obj/
 .vs/
 .idea/
 *.user
+logs/
 appsettings.Local.json
-launchSettings.local.json
