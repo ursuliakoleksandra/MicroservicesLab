@@ -3,6 +3,8 @@
   <ItemGroup>
     <PackageReference Include="MongoDB.Driver" Version="3.4.0" />
     <PackageReference Include="MongoDB.Bson" Version="3.4.0" />
+    <!-- Лаб. 05: spans команд MongoDB в OpenTelemetry (ActivitySource "MongoDB.Driver.Core.Extensions.DiagnosticSources") -->
+    <PackageReference Include="MongoDB.Driver.Core.Extensions.DiagnosticSources" Version="2.1.0" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="9.0.0" />

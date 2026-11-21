@@ -1,33 +1,50 @@
-// Оркестрація платформи (.NET Aspire): один запуск (dotnet run) піднімає API разом із базою даних
-// і відкриває Aspire Dashboard зі станом ресурсів.
+// Оркестрація платформи TechNest (.NET Aspire): одна команда `dotnet run --project Platform.AppHost` піднімає
+// контейнери SQL Server і MongoDB, три мікросервіси, Aggregator і Gateway та відкриває Aspire Dashboard.
+// AppHost не містить бізнес-логіки — лише опис ресурсів і залежностей між ними.
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Варіант 1 (за замовчуванням): існуюча БД з Лаб. 01.
-// Рядок підключення "OrdersDb" береться з appsettings.json AppHost (секція ConnectionStrings).
-var ordersDb = builder.AddConnectionString("OrdersDb");
+// ---------- бази даних у контейнерах (Docker Desktop має бути запущений) ----------
+// Пароль — параметр-секрет, а не рядок у коді: dotnet user-secrets set "Parameters:sql-password" "<пароль>"
+// (або його запитає Dashboard під час першого запуску).
+var sqlPassword = builder.AddParameter("sql-password", secret: true);
 
-// Варіант 2: SQL Server у контейнері (потрібен Docker Desktop). База створюється ПОРОЖНЬОЮ —
-// застосуйте до неї db/p1/schema.sql, procedures.sql, seed.sql (рядок підключення видно в Dashboard).
-// var ordersDb = builder.AddSqlServer("sql").WithDataVolume().AddDatabase("OrdersDb");
+var sql = builder.AddSqlServer("sql", sqlPassword)
+                 .WithDataVolume();                          // дані переживають перезапуск
+var ordersDb  = sql.AddDatabase("OrdersDb");                 // Лаб. 02 (ADO.NET + Dapper)
+var catalogDb = sql.AddDatabase("CatalogDb");                // Лаб. 03 (EF Core; схему створюють міграції при старті)
 
-// Ім'я ресурсу "OrdersDb" збігається з іменем рядка підключення в Orders.Api, тому Aspire передає його
-// у ConnectionStrings__OrdersDb автоматично — код Orders.Api змінювати не потрібно.
-builder.AddProject<Projects.Orders_Api>("orders-api")
-       .WithReference(ordersDb);
+var mongo = builder.AddMongoDB("mongo")
+                   .WithDataVolume();                        // окремий volume
+var reviewsDb = mongo.AddDatabase("ReviewsDb");              // Лаб. 04 (індекси й сідінг створює сам сервіс)
 
-// Сервіс «Каталог» (Лаб. 03, EF Core): схему створюють міграції, тому БД CatalogDb має бути НЕ створена скриптами Лаб. 01
-// (або порожня). Варіант 2: builder.AddSqlServer("sql").WithDataVolume().AddDatabase("CatalogDb") — міграції застосуються самі.
-var catalogDb = builder.AddConnectionString("CatalogDb");
+// Імена баз збігаються з іменами рядків підключення, які сервіси вже читають (ConnectionStrings:OrdersDb ...),
+// тому Aspire передає їх через WithReference — код сервісів не змінюється.
 
-builder.AddProject<Projects.Catalog_Api>("catalog-api")
-       .WithReference(catalogDb);
+// ---------- одноразова ініціалізація OrdersDb: скрипти db/p1 (схема, процедури, seed) ----------
+var ordersDbInit = builder.AddProject<Projects.Platform_DbInit>("orders-db-init")
+    .WithReference(ordersDb).WaitFor(ordersDb);
 
-// Сервіс «Відгуки» (Лаб. 04, Clean Architecture + MongoDB). Рядок підключення "ReviewsDb" — у appsettings.json AppHost;
-// Reviews.Infrastructure віддає йому пріоритет над секцією MongoDb. Варіант 2 (MongoDB у контейнері):
-// var reviewsDb = builder.AddMongoDB("mongo").WithDataVolume().AddDatabase("ReviewsDb");  // потрібен пакет Aspire.Hosting.MongoDB
-var reviewsDb = builder.AddConnectionString("ReviewsDb");
+// ---------- мікросервіси (ім'я ресурсу = логічна адреса для service discovery: http://orders-api) ----------
+var orders = builder.AddProject<Projects.Orders_Api>("orders-api")
+    .WithReference(ordersDb).WaitFor(ordersDb)
+    .WaitForCompletion(ordersDbInit);                        // стартує лише після застосування схеми
 
-builder.AddProject<Projects.Reviews_WebApi>("reviews-webapi")
-       .WithReference(reviewsDb);
+var catalog = builder.AddProject<Projects.Catalog_Api>("catalog-api")
+    .WithReference(catalogDb).WaitFor(catalogDb);
+
+var reviews = builder.AddProject<Projects.Reviews_WebApi>("reviews-api")
+    .WithReference(reviewsDb).WaitFor(reviewsDb);
+
+// ---------- Aggregator: опитує три сервіси (WithReference = service discovery, WaitFor = порядок запуску) ----------
+var aggregator = builder.AddProject<Projects.Platform_Aggregator>("aggregator")
+    .WithReference(orders).WithReference(catalog).WithReference(reviews)
+    .WaitFor(orders).WaitFor(catalog).WaitFor(reviews);
+
+// ---------- Gateway: єдина точка входу з фіксованим портом 5000 ----------
+builder.AddProject<Projects.Platform_ApiGateway>("gateway")
+    .WithHttpEndpoint(port: 5000, name: "public")
+    .WithExternalHttpEndpoints()
+    .WithReference(orders).WithReference(catalog).WithReference(reviews).WithReference(aggregator)
+    .WaitFor(aggregator);
 
 builder.Build().Run();

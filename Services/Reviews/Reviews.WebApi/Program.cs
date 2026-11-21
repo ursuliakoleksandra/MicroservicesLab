@@ -3,16 +3,11 @@ using Reviews.Application;
 using Reviews.Application.Common.Mappings;
 using Reviews.Infrastructure;
 using Reviews.WebApi.ErrorHandling;
-using Serilog;
+using Platform.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ---------- Serilog: структуровані логи (CorrelationId, RequestPath) ----------
-builder.Host.UseSerilog((ctx, cfg) => cfg
-    .ReadFrom.Configuration(ctx.Configuration)
-    .Enrich.FromLogContext()
-    .WriteTo.Console(outputTemplate:
-        "[{Timestamp:HH:mm:ss} {Level:u3}] ({CorrelationId}) {SourceContext} {Message:lj}{NewLine}{Exception}"));
+builder.AddServiceDefaults();      // Лаб. 05: Serilog, OpenTelemetry, health checks (у т.ч. MongoDB), service discovery
 
 // ---------- кожен шар надає власний метод розширення ----------
 builder.Services
@@ -38,7 +33,6 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
-app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
@@ -49,7 +43,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
-app.MapHealthChecks("/health");
+app.MapDefaultEndpoints();         // /health (у т.ч. перевірка MongoDB) і /alive
 app.Run();
 
 public partial class Program;                       // для WebApplicationFactory (API-тести)

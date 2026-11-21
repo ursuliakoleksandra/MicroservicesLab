@@ -1,5 +1,12 @@
 <Solution>
-  <Project Path="Platform.AppHost/Platform.AppHost.csproj" />
+  <Folder Name="/Platform/">
+    <Project Path="Platform.AppHost/Platform.AppHost.csproj" />
+    <Project Path="Platform.ServiceDefaults/Platform.ServiceDefaults.csproj" />
+    <Project Path="Platform.ApiGateway/Platform.ApiGateway.csproj" />
+    <Project Path="Platform.Aggregator/Platform.Aggregator.csproj" />
+    <Project Path="Platform.DbInit/Platform.DbInit.csproj" />
+    <Project Path="Platform.Tests/Platform.Tests.csproj" />
+  </Folder>
   <Folder Name="/Services/Orders/">
     <Project Path="Services/Orders/Orders.Api/Orders.Api.csproj" />
     <Project Path="Services/Orders/Orders.Bll/Orders.Bll.csproj" />

@@ -46,7 +46,7 @@ public sealed class ApiExceptionHandler(
         DomainException => StatusCodes.Status400BadRequest,
         ConflictException => StatusCodes.Status409Conflict,                                   // конфлікт версій
         MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey } => StatusCodes.Status409Conflict, // унікальний індекс
-        MongoBulkWriteException<MongoDB.Bson.BsonDocument> => StatusCodes.Status400BadRequest,
+        MongoBulkWriteException => StatusCodes.Status400BadRequest,
         MongoWriteException => StatusCodes.Status400BadRequest,
         MongoConnectionException => StatusCodes.Status503ServiceUnavailable,
         TimeoutException => StatusCodes.Status503ServiceUnavailable,                          // server selection timeout
@@ -71,7 +71,7 @@ public sealed class ApiExceptionHandler(
             MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey } =>
                 ("Conflict", "A document with the same unique key already exists"),
             MongoWriteException => ("Write failed", "The database rejected the write operation"),
-            MongoBulkWriteException<MongoDB.Bson.BsonDocument> => ("Write failed", "The database rejected the write operation"),
+            MongoBulkWriteException => ("Write failed", "The database rejected the write operation"),
             MongoConnectionException or TimeoutException => ("Service unavailable", "The database is temporarily unavailable"),
             _ => ("An unexpected error occurred", environment.IsDevelopment() ? ex.ToString() : null)   // деталі 500 — лише в Development
         };

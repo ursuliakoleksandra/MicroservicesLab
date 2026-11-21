@@ -1,23 +1,18 @@
 using Orders.Api.ErrorHandling;
+using Platform.ServiceDefaults;
 using Orders.Bll.Mapping;
 using Orders.Bll.Services;
 using Orders.Dal;
 using Orders.Dal.Interfaces;
-using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.AddServiceDefaults();      // Лаб. 05: Serilog, OpenTelemetry, health checks, service discovery
 
 // Рядок підключення береться з appsettings.json і перевизначається змінною оточення
 // ConnectionStrings__OrdersDb (саме так його передає .NET Aspire через WithReference).
 var connectionString = builder.Configuration.GetConnectionString("OrdersDb")
     ?? throw new InvalidOperationException("Connection string 'OrdersDb' is missing");
-
-// ---------- логування (Serilog) ----------
-builder.Host.UseSerilog((ctx, cfg) => cfg
-    .ReadFrom.Configuration(ctx.Configuration)
-    .Enrich.FromLogContext()
-    .WriteTo.Console(outputTemplate:
-        "[{Timestamp:HH:mm:ss} {Level:u3}] ({CorrelationId}) {Message:lj}{NewLine}{Exception}"));
 
 // ---------- DI: Unit of Work (Scoped = один екземпляр і одне з'єднання на HTTP-запит) і сервіси ----------
 builder.Services.AddScoped<IUnitOfWork>(_ => new UnitOfWork(connectionString));
@@ -45,7 +40,6 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
-app.UseSerilogRequestLogging();
 app.UseExceptionHandler();            // глобальний обробник: винятки -> ProblemDetails
 
 if (app.Environment.IsDevelopment())
@@ -56,6 +50,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+app.MapDefaultEndpoints();         // /health і /alive
 app.Run();
 
 public partial class Program;        // для WebApplicationFactory (API-тести)

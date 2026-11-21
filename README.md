@@ -6,6 +6,7 @@
 | № 02 | Мікросервіс «Замовлення»: DAL → BLL → Web/API (ADO.NET + Dapper), Unit of Work, Aspire | [Частина 2](#частина-2--мікросервіс-замовлення-лаб-02) |
 | № 03 | Мікросервіс «Каталог» на EF Core: Code First, Fluent API, міграції, специфікації, пагінація | [Частина 3](#частина-3--мікросервіс-каталог-на-ef-core-лаб-03) |
 | № 04 | Мікросервіс «Відгуки»: Clean Architecture, CQRS/MediatR, Value Objects, MongoDB | [Частина 4](#частина-4--мікросервіс-відгуки-clean-architecture--mongodb-лаб-04) |
+| № 05 | Платформа на .NET Aspire: AppHost, ServiceDefaults (Serilog + OpenTelemetry), YARP Gateway, Aggregator | [Частина 5](#частина-5--мікросервісна-платформа-net-aspire-лаб-05) |
 
 # Частина 1 — три бази даних (Лаб. 01)
 
@@ -401,6 +402,8 @@ sequenceDiagram
 Усе перетворюється **одним** глобальним обробником `DomainExceptionHandler` (`IExceptionHandler` + `AddProblemDetails`); у кожну відповідь додається `traceId`. Операції логуються Serilog з кореляційним ідентифікатором (`X-Correlation-ID`), без персональних і секретних даних.
 
 ## 12. Запуск через .NET Aspire
+
+> **Лаб. 05:** AppHost перероблено — бази тепер піднімаються в контейнерах, а запуск описано в [розділі 32](#32-запуск). Нижче — запуск Лаб. 02 як був.
 
 **Потрібно:** .NET SDK 9.0.200+ (формат `.slnx`), SQL Server з базою з Лаб. 01. Docker потрібен лише для SQL Server у контейнері (або для варіанта 2 нижче).
 
@@ -852,3 +855,190 @@ db.reviews.getIndexes()         // ix_reviews_product_created, ux_reviews_produc
 | Контролери через `ISender`, AutoMapper, Swagger | `Reviews.WebApi/Controllers`, `ReviewProfile` |
 | ProblemDetails із підтримкою MongoDB-винятків | `Reviews.WebApi/ErrorHandling/ApiExceptionHandler.cs` |
 | Ідемпотентний сідінг, індекси, конфігурація | `Reviews.Infrastructure/Seeding`, `appsettings*.json` |
+
+---
+
+# Частина 5 — мікросервісна платформа .NET Aspire (Лаб. 05)
+
+Три сервіси з Лаб. 02–04, їхні бази даних і нові компоненти (**ServiceDefaults**, **API Gateway на YARP**, **Aggregator**)
+запускаються **однією командою** через **AppHost**. Один запит простежується через усі сервіси в Aspire Dashboard —
+за trace і за `X-Correlation-Id`.
+
+```mermaid
+flowchart TD
+    C[Клієнт] --> G["gateway :5000<br/>YARP + CorrelationId"]
+    G -->|/api/orders, /api/customers| O[orders-api]
+    G -->|/api/products, /api/categories, /api/brands| K[catalog-api]
+    G -->|/api/reviews, /api/discussions| R[reviews-api]
+    G -->|/api/aggregator| A["aggregator<br/>Task.WhenAll"]
+    A -.-> O
+    A -.-> K
+    A -.-> R
+    O --> S1[("OrdersDb<br/>SQL Server")]
+    K --> S2[("CatalogDb<br/>SQL Server")]
+    R --> M[("ReviewsDb<br/>MongoDB")]
+```
+
+## 31. Структура рішення
+
+| Проєкт | Призначення |
+|--------|-------------|
+| `Platform.AppHost` | Orchestrator: контейнери SQL Server і MongoDB, сервіси, Aggregator, Gateway. **Без бізнес-логіки** |
+| `Platform.ServiceDefaults` | Спільна бібліотека: Serilog, OpenTelemetry, health checks, service discovery, resilience, `CorrelationIdMiddleware` / `CorrelationIdHandler` |
+| `Platform.ApiGateway` | Єдина точка входу (YARP), порт **5000**, логування маршрутизації |
+| `Platform.Aggregator` | Aggregator Pattern: «повна картка замовлення» (замовлення + товари + відгуки) |
+| `Platform.DbInit` | Одноразова задача: застосовує `db/p1/*.sql` до `OrdersDb` у контейнері |
+| `Platform.Tests` | Unit-тести Aggregator (часткові відмови, скасування) і `CorrelationIdMiddleware` |
+| `Services/*` | Мікросервіси з Лаб. 02–04 |
+
+Залежності односпрямовані: `AppHost → усі проєкти`; `Orders.Api`, `Catalog.Api`, `Reviews.WebApi`, `ApiGateway`, `Aggregator → ServiceDefaults`.
+Сервіси про AppHost нічого не знають. Aggregator і Gateway не посилаються на сервіси — лише на їхні логічні імена.
+
+## 32. Запуск
+
+**Потрібно:** .NET SDK 9.0.200+, **Docker Desktop (запущений)**.
+
+```bash
+# 1) пароль SQL Server — параметр-секрет (не в коді й не в appsettings)
+dotnet user-secrets set "Parameters:sql-password" "Your_strong_Passw0rd" --project Platform.AppHost
+#    (якщо не задати — Dashboard запитає значення під час першого запуску)
+
+# 2) одна команда
+dotnet run --project Platform.AppHost
+```
+
+У Dashboard усі ресурси мають бути **Running** (`orders-db-init` — **Finished**, це одноразова задача):
+
+| Ресурс | Що це |
+|--------|-------|
+| `sql`, `mongo` | контейнери з `WithDataVolume()` — дані переживають перезапуск |
+| `OrdersDb`, `CatalogDb`, `ReviewsDb` | бази; імена збігаються з рядками підключення, які сервіси вже читають |
+| `orders-db-init` | застосовує схему, процедури й seed Лаб. 01; `orders-api` стартує після неї |
+| `orders-api`, `catalog-api`, `reviews-api` | мікросервіси (`catalog-api` сам застосовує міграції, `reviews-api` — індекси й seed) |
+| `aggregator`, `gateway` | нові компоненти; порядок: БД → сервіси → aggregator → gateway |
+
+Адреса Gateway — **http://localhost:5000**. Без Aspire (як у Лаб. 02–04) сервіси теж запускаються: резервні рядки підключення лишилися в `appsettings.json`.
+
+## 33. Що змінено в мікросервісах (Лаб. 02–04)
+
+| Файл | Зміна |
+|------|-------|
+| `*/Program.cs` | `builder.AddServiceDefaults()`, `app.UseMiddleware<CorrelationIdMiddleware>()`, `app.MapDefaultEndpoints()`; видалено власні `UseSerilog`, `UseSerilogRequestLogging` |
+| `*.csproj` | `ProjectReference` на ServiceDefaults; прибрано прямий `Serilog.AspNetCore` |
+| `appsettings*.json` | прибрано дубльовану конфігурацію Serilog (у Каталозі лишився `Override` для SQL-команд EF Core) |
+| видалено | `Orders.Api/.../CorrelationIdMiddleware.cs`, `Reviews.WebApi/.../CorrelationIdMiddleware.cs`, `Catalog.Api/.../RequestLogContextMiddleware.cs` |
+| `OrderService.cs` | бізнес-події з `OrderId`, `ItemsCount`, `Status` та власний span `ConfirmOrder` (ч. 3.3) |
+| `Reviews.Infrastructure` | `MongoDbContext` підписує драйвер на трасування (`DiagnosticsActivityEventSubscriber`) |
+| `ApiExceptionHandler.cs` (Reviews) | виправлення зіставлення `MongoBulkWriteException` |
+| `Catalog.Api/Dockerfile` | копіює `Platform.ServiceDefaults` |
+
+Бізнес-логіку (контролери, репозиторії, домен) не змінено. Рядки підключення Aspire передає як `ConnectionStrings__OrdersDb` /
+`CatalogDb` / `ReviewsDb`.
+
+## 34. ServiceDefaults
+
+* **Serilog** — основний провайдер: enrichers `ServiceName` (ім'я ресурсу Aspire), `Environment`, `MachineName`, `ThreadId`; `FromLogContext`
+  (звідси `CorrelationId`); рівень `Debug` у Development, `Information` у Production; шумні `Microsoft.AspNetCore`, EF Core, HttpClient, MongoDB — `Warning`;
+  sink Console з `CompactJsonFormatter`; **`writeToProviders: true`** — записи йдуть далі в провайдер OpenTelemetry. Без цього вкладка *Structured logs*
+  порожня, бо Dashboard отримує логи по OTLP, а не з консолі. `TraceId`/`SpanId` додаються автоматично.
+* **CorrelationId** — `X-Correlation-Id` береться із запиту або генерується (Gateway — перша точка входу; сервіси — для запитів в обхід нього),
+  кладеться в `LogContext`, тег Activity `correlation.id` і заголовок відповіді; логуються межі запиту й факт генерації.
+  Значення ззовні перевіряється (довжина ≤ 128, лише `A-Za-z0-9-_.:`). `CorrelationIdHandler` передає його у вихідні HTTP-виклики.
+* **OpenTelemetry** — ASP.NET Core, HttpClient, **SqlClient** (покриває Dapper і EF Core), **MongoDB** (`DiagnosticSources`), власні `ActivitySource`
+  (`Orders.Api`, `Catalog.Api`, `Reviews.WebApi`, `Platform.Aggregator`); OTLP-експорт (батчевий); sampling 100 % у Development, у Production — `Telemetry:SamplingRatio` (типово 0.1).
+* **Resilience / service discovery** для кожного `HttpClient`; **health checks** `/health`, `/alive` (в Development).
+
+> **CorrelationId ≠ TraceId.** CorrelationId створює й передає сам застосунок (бізнес-ідентифікатор звернення, його можна назвати в підтримці);
+> TraceId автоматично генерує OpenTelemetry для технічного трасування. Обидва потрібні: перший — для людини й для пошуку логів, другий — для дерева spans.
+
+## 35. API Gateway (YARP)
+
+Маршрути й кластери — `Platform.ApiGateway/appsettings.json`; адреси `http://orders-api` розв'язує service discovery (`AddServiceDiscoveryDestinationResolver`).
+
+| Шлях через Gateway | Куди | Примітка |
+|--------------------|------|----------|
+| `/api/aggregator/**` | `aggregator` | `Order: 1` — вищий пріоритет |
+| `/api/orders/**`, `/api/customers/**` | `orders-api` | |
+| `/api/products/**`, `/api/categories/**`, `/api/brands/**` | `catalog-api` | `RoundRobin` |
+| `/api/reviews/**`, `/api/discussions/**` | `reviews-api` | |
+| `/api/order-products/**` | `orders-api` → `/api/products/**` | локальний довідник Замовлень (шлях `/api/products` зайнятий Каталогом); YARP-transform `PathPattern` |
+
+Middleware `CorrelationId` стоїть **перед** `MapReverseProxy` (YARP копіює заголовки запиту в проксований). Gateway логує метод, шлях, IP клієнта,
+маршрут і кластер, статус, тривалість, розмір відповіді та помилки недоступних сервісів (`IForwarderErrorFeature`: connection refused, timeout).
+Частота запитів, тривалість і частка помилок — метрики ASP.NET Core у вкладці *Metrics*. Додатково: `ActivityTimeout` 30 с, `MaxRequestBodySize` 1 МБ, метадані маршрутів.
+
+## 36. Aggregator
+
+`GET /api/aggregator/orders/{id}/full` → `FullOrderDto { order, products, reviews, warnings }` (camelCase, `null` не серіалізується).
+
+1. Замовлення береться першим: без нього агрегувати нічого (немає — 404; `orders-api` недоступний — 503).
+2. Каталог і відгуки опитуються **паралельно** (`Task.WhenAll`; всередині клієнтів — теж по товарах). `CancellationToken` іде в усі виклики; `Task.WaitAll` і `.Result` не використовуються.
+3. Недоступність каталогу чи відгуків (`HttpRequestException`, таймаут, відкритий circuit breaker) → **200 OK** з доступними даними й записом у `warnings`.
+   Якщо запит скасував клієнт — виняток не ховається за попередженням.
+4. Узгодженість: у відповіді лише товари цього замовлення й відгуки саме на ці товари.
+
+Typed HttpClients (`OrdersClient`, `CatalogClient`, `ReviewsClient`) мають `BaseAddress` `https+http://<ім'я-ресурсу>`; `CorrelationIdHandler` підключено до всіх через ServiceDefaults.
+Для контролерів null-значення вимикає `AddJsonOptions` (`ConfigureHttpJsonOptions` діє лише на minimal API).
+
+## 37. Перевірка
+
+```bash
+curl -i http://localhost:5000/api/orders/1                    # у відповіді X-Correlation-Id
+curl -i "http://localhost:5000/api/products?page=1"           # -> catalog-api
+curl -i "http://localhost:5000/api/reviews?productId=1"       # -> reviews-api
+curl -i http://localhost:5000/api/customers/1                 # -> orders-api
+curl -i http://localhost:5000/api/order-products              # локальний довідник Замовлень
+curl -i http://localhost:5000/api/aggregator/orders/1/full    # замовлення + товари + відгуки
+curl -i -H "X-Correlation-Id: demo-123" http://localhost:5000/api/orders/1   # власний id зберігається
+
+# запис через Gateway
+curl -i -X POST http://localhost:5000/api/orders -H "Content-Type: application/json" \
+  -d '{"customerId":1,"shippingAddress":"Чернівці, вул. Руська, 10","items":[{"productId":3,"units":1}]}'
+```
+
+**Trace:** Dashboard → *Traces* → trace запиту `/api/aggregator/orders/1/full`: `gateway → aggregator → orders-api → SQL`, паралельні гілки
+`catalog-api → SQL` і `reviews-api → MongoDB`. Spans видно за тегом `correlation.id`.
+**Логи:** *Structured logs* → фільтр `CorrelationId = <значення із заголовка відповіді>` — логи gateway, aggregator і всіх сервісів ланцюжка
+з `ServiceName`, `Environment`, `MachineName`, `TraceId`, `SpanId`.
+**Прямий виклик в обхід Gateway** (адреса з Dashboard): сервіс сам згенерує CorrelationId і залогує факт генерації; Gateway додає ще й логування маршрутизації.
+
+**Сценарій відмови:** у Dashboard зупиніть `reviews-api` → `curl .../api/aggregator/orders/1/full` → **200** із замовленням і товарами та
+`"warnings": ["reviews-api is unavailable"]`; у логах — `LogWarning` з винятком і тривалістю. Запустіть сервіс знову — відповідь знову повна.
+(Через повтори resilience-handler відповідь у цьому сценарії приходить на кілька секунд пізніше.)
+
+| Самоперевірка | Очікувано |
+|---------------|-----------|
+| `dotnet test Platform.slnx` | усі тести зелені |
+| `curl -i http://localhost:5000/api/orders/1` | 200 + `X-Correlation-Id` |
+| пошук за одним CorrelationId | логи кількох сервісів |
+| зупинено `reviews-api` | часткова відповідь, не 500 |
+| `git diff` сервісів Лаб. 02–04 | лише Program.cs, csproj, appsettings, логування в `OrderService`, мапінг Mongo-клієнта |
+
+**Знімки екрана для здачі:** ресурси Running; trace агрегувального запиту; логи, відфільтровані за одним CorrelationId.
+
+## 38. Відповідність критеріям Лаб. 05
+
+| Критерій | Де |
+|----------|----|
+| Структура Aspire solution, залежності | `Platform.slnx`, `*.csproj` |
+| AppHost: SQL Server + MongoDB, секрет-параметр, `WithDataVolume`, `WithReference`, `WaitFor`, фіксований порт Gateway | `Platform.AppHost/AppHost.cs` |
+| Мінімальні зміни сервісів, рядки підключення з конфігурації | розділ 33 |
+| Serilog (enrichers, LogContext, `writeToProviders`) | `Platform.ServiceDefaults/Extensions.cs` |
+| CorrelationId: middleware + `DelegatingHandler` | `Platform.ServiceDefaults/CorrelationId.cs` |
+| OpenTelemetry: HTTP, SQL, MongoDB, OTLP, власні spans | `Extensions.cs`, `MongoDbContext.cs`, `OrderService.cs` |
+| YARP: маршрути/кластери з логічними іменами, `Order`, service discovery | `Platform.ApiGateway` |
+| Logging Gateway | `Platform.ApiGateway/Program.cs` |
+| Typed HttpClients, `Task.WhenAll`, часткові відмови, composite DTO | `Platform.Aggregator` |
+| README з інструкцією запуску | розділи 32, 37 |
+
+## 39. Контрольні питання (коротко)
+
+* **AppHost / ServiceDefaults.** AppHost описує, *що* запустити й як ресурси пов'язані; ServiceDefaults — спільна поведінка всередині кожного сервісу. AppHost без бізнес-логіки, бо це інструмент розробки (у Production оркестрація інша — Лаб. 10), а сервіси не повинні від нього залежати.
+* **Service discovery.** `WithReference` передає сервісу змінні `services__orders-api__http__0`; `AddServiceDiscovery` підставляє їх замість імені в `http://orders-api`.
+* **`WithReference` vs `WaitFor`.** Перший дає адресу/рядок підключення, другий — порядок запуску (чекає готовності). Без `WaitFor` сервіс може стартувати раніше за базу, без `WithReference` — не знатиме адреси.
+* **CorrelationId vs TraceId** — див. розділ 34. Передача: Gateway пише в `Request.Headers` → YARP копіює в проксований запит → middleware сервісу; Aggregator → `CorrelationIdHandler` у кожному `HttpClient`.
+* **Чому логи лише з консолі не в Structured logs.** Dashboard приймає OTLP; консоль потрапляє лише у *Console logs*. Потрібен `writeToProviders: true`.
+* **Span / trace.** Span — одиниця роботи, trace — дерево spans одного запиту; spans різних сервісів об'єднує заголовок `traceparent`, який додають інструментації ASP.NET Core та HttpClient.
+* **`Task.WhenAll`.** Паралельні виклики: ~max(t), а не сума. `Task.WaitAll`/`.Result` блокують потоки пулу.
+* **Без обробки часткових відмов** недоступність одного сервісу дала б 500 для всього запиту, хоча половину даних можна було повернути.
+* **Навіщо Gateway.** Одна адреса й порт для клієнтів, наскрізний CorrelationId, єдине логування й політики (таймаути, ліміти), сервіси можна переносити без зміни клієнтів.

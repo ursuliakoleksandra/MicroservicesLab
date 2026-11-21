@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Одноразова задача: застосовує скрипти Лаб. 01 (db/p1) до OrdersDb у контейнері SQL Server і завершується.
+       orders-api стартує лише після її успішного завершення (WaitForCompletion в AppHost). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\db\p1\schema.sql"     Link="sql\1-schema.sql"     CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\db\p1\procedures.sql" Link="sql\2-procedures.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\db\p1\seed.sql"       Link="sql\3-seed.sql"       CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

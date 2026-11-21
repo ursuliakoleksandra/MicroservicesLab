@@ -5,7 +5,6 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
   </ItemGroup>
   <ItemGroup>
@@ -13,5 +12,9 @@
     <ProjectReference Include="..\Catalog.Bll\Catalog.Bll.csproj" />
     <ProjectReference Include="..\Catalog.Dal\Catalog.Dal.csproj" />
     <ProjectReference Include="..\Catalog.Domain\Catalog.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Лаб. 05: спільні налаштування логування, трасування, health checks, service discovery -->
+    <ProjectReference Include="..\..\..\Platform.ServiceDefaults\Platform.ServiceDefaults.csproj" />
   </ItemGroup>
 </Project>

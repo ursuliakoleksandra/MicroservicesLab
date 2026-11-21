@@ -8,26 +8,14 @@ using Catalog.Dal.Seed;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Serilog;
-using Serilog.Events;
+using Platform.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();      // Лаб. 05: Serilog, OpenTelemetry, health checks, service discovery
+
 var connectionString = builder.Configuration.GetConnectionString("CatalogDb")
     ?? throw new InvalidOperationException("Connection string 'CatalogDb' is missing");
-
-// ---------- Serilog: структуровані логи (властивості як ключі), sink-и: console + file (див. appsettings.json) ----------
-builder.Host.UseSerilog((ctx, cfg) =>
-{
-    cfg.ReadFrom.Configuration(ctx.Configuration)
-       .Enrich.FromLogContext()                       // CorrelationId, RequestPath, UserId — з RequestLogContextMiddleware
-       .WriteTo.Console(outputTemplate:
-           "[{Timestamp:HH:mm:ss} {Level:u3}] ({CorrelationId}) {RequestPath} {Message:lj}{NewLine}{Exception}");
-
-    // SQL-команди EF Core в лозі: eager = 1 запит, explicit = 2 запити
-    if (ctx.Configuration.GetValue("Diagnostics:LogSqlCommands", true))
-        cfg.MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", LogEventLevel.Information);
-});
 
 // ---------- EF Core ----------
 builder.Services.AddDbContext<CatalogDbContext>(options =>
@@ -80,8 +68,7 @@ using (var scope = app.Services.CreateScope())
         await DbInitializer.SeedAsync(db);
 }
 
-app.UseMiddleware<RequestLogContextMiddleware>();
-app.UseSerilogRequestLogging();
+app.UseMiddleware<CorrelationIdMiddleware>();   // спільний, з ServiceDefaults
 app.UseExceptionHandler();                            // глобальна обробка: виняток -> ProblemDetails (логується один раз)
 
 if (app.Environment.IsDevelopment())
@@ -92,6 +79,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+app.MapDefaultEndpoints();         // /health і /alive
 app.Run();
 
 public partial class Program;                         // для WebApplicationFactory (API-тести)

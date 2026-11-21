@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using AutoMapper;
 using Microsoft.Extensions.Logging;
 using Orders.Bll.Dtos;
@@ -15,6 +16,9 @@ namespace Orders.Bll.Services;
 public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderService> logger) : IOrderService
 {
     private const string Actor = "api";
+
+    // Лаб. 05: власні spans бізнес-операцій (джерело "Orders.Api" зареєстроване в ServiceDefaults)
+    private static readonly ActivitySource Source = new("Orders.Api");
 
     public async Task<OrderDto> GetByIdAsync(long id, CancellationToken ct)
     {
@@ -91,7 +95,8 @@ public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderS
             throw;
         }
 
-        logger.LogInformation("Order {OrderId} created for customer {CustomerId}", orderId, dto.CustomerId);
+        logger.LogInformation("Order {OrderId} created for customer {CustomerId}, {ItemsCount} items, status {Status}",
+            orderId, dto.CustomerId, dto.Items.Count, OrderStatus.Submitted);
         return await GetByIdAsync(orderId, ct);
     }
 
@@ -114,6 +119,10 @@ public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderS
 
     public async Task ConfirmOrderAsync(long id, CancellationToken ct)
     {
+        using var activity = Source.StartActivity("ConfirmOrder");
+        activity?.SetTag("order.id", id);
+
+        int itemsCount;
         await uow.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         try
         {
@@ -121,6 +130,7 @@ public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderS
                         ?? throw new NotFoundException($"Order {id} not found");
             if (order.Items.Count == 0)
                 throw new BusinessConflictException($"Order {id} has no items");
+            itemsCount = order.Items.Count;
 
             // Submitted -> AwaitingValidation -> StockConfirmed; допустимість кожного переходу перевіряє процедура (THROW 50002)
             if (order.Status == OrderStatus.Submitted)
@@ -139,7 +149,9 @@ public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderS
             await uow.RollbackAsync(ct);   // статус і залишки повертаються назад
             throw;
         }
-        logger.LogInformation("Order {OrderId} confirmed", id);
+        activity?.SetTag("order.status", OrderStatus.StockConfirmed);
+        logger.LogInformation("Order {OrderId} confirmed, {ItemsCount} items, status {Status}",
+            id, itemsCount, OrderStatus.StockConfirmed);
     }
 
     public async Task PayOrderAsync(long id, PayOrderDto dto, CancellationToken ct)
@@ -149,23 +161,24 @@ public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderS
 
         // процедура сама атомарно створює PaymentRecord і змінює статус (власна транзакція)
         await uow.Orders.ChangeStatusAsync(id, OrderStatus.Paid, Actor, dto.PaymentMethod, ct);
-        logger.LogInformation("Order {OrderId} paid", id);
+        logger.LogInformation("Order {OrderId} paid by {PaymentMethod}, status {Status}", id, dto.PaymentMethod, OrderStatus.Paid);
     }
 
     public async Task ShipOrderAsync(long id, CancellationToken ct)
     {
         await uow.Orders.ChangeStatusAsync(id, OrderStatus.Shipped, Actor, null, ct);   // неоплачене -> 409
-        logger.LogInformation("Order {OrderId} shipped", id);
+        logger.LogInformation("Order {OrderId} shipped, status {Status}", id, OrderStatus.Shipped);
     }
 
     public async Task CancelOrderAsync(long id, CancellationToken ct)
     {
+        bool stockWasReserved;
         await uow.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         try
         {
             var order = await uow.Orders.GetWithItemsAsync(id, ct)
                         ?? throw new NotFoundException($"Order {id} not found");
-            var stockWasReserved = order.Status == OrderStatus.StockConfirmed;
+            stockWasReserved = order.Status == OrderStatus.StockConfirmed;
 
             await uow.Orders.ChangeStatusAsync(id, OrderStatus.Cancelled, Actor, null, ct);   // після оплати -> 409
             if (stockWasReserved)
@@ -179,6 +192,6 @@ public sealed class OrderService(IUnitOfWork uow, IMapper mapper, ILogger<OrderS
             await uow.RollbackAsync(ct);
             throw;
         }
-        logger.LogInformation("Order {OrderId} cancelled", id);
+        logger.LogInformation("Order {OrderId} cancelled, status {Status}, stock returned: {StockReturned}", id, OrderStatus.Cancelled, stockWasReserved);
     }
 }
