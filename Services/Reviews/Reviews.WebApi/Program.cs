@@ -3,7 +3,9 @@ using Reviews.Application;
 using Reviews.Application.Common.Mappings;
 using Reviews.Infrastructure;
 using Reviews.WebApi.ErrorHandling;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Platform.ServiceDefaults;
+using Reviews.WebApi.GrpcServices;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,6 +29,13 @@ builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
     ctx.ProblemDetails.Extensions["traceId"] = ctx.HttpContext.TraceIdentifier);
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 
+// ---------- Лаб. 06: gRPC (HTTP/2; ALPN на HTTPS-endpoint) + interceptor логування викликів ----------
+builder.Services.AddGrpc(o => o.Interceptors.Add<GrpcLoggingInterceptor>());
+
+// gRPC працює поверх HTTP/2. Один endpoint обслуговує і REST (HTTP/1.1 через Gateway), і gRPC: на HTTPS протокол
+// узгоджується автоматично (ALPN). Без TLS для gRPC потрібен окремий endpoint лише з HTTP/2.
+builder.WebHost.ConfigureKestrel(k => k.ConfigureEndpointDefaults(l => l.Protocols = HttpProtocols.Http1AndHttp2));
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -43,6 +52,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+app.MapGrpcService<ReviewsGrpcService>();
 app.MapDefaultEndpoints();         // /health (у т.ч. перевірка MongoDB) і /alive
 app.Run();
 

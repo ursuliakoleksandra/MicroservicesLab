@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+// Контракт читання відгуків для внутрішніх сервісів (Aggregator).
+// Номери полів не змінюються після публікації; видалені поля — `reserved`.
+
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "Reviews.Contracts";   // не "Reviews.Grpc": простір імен Grpc затьмарив би Grpc.Core
+
+package reviews;
+
+service ReviewsService {
+  // Найновіші відгуки одразу для кількох товарів (один виклик замість N).
+  // Порожній список товарів або Id <= 0 -> InvalidArgument.
+  rpc GetForProducts (GetForProductsRequest) returns (ReviewsReply);
+}
+
+message GetForProductsRequest {
+  repeated int64 product_ids = 1;
+  int32 per_product = 2;          // 0 -> значення за замовчуванням (5); максимум 20
+}
+
+message ReviewReply {
+  string id = 1;                  // ObjectId у вигляді рядка
+  int64 product_id = 2;
+  int64 author_id = 3;
+  string author_name = 4;
+  string type = 5;                // text | video | rating-only
+  int32 rating = 6;               // 1..5
+  optional string text = 7;
+  google.protobuf.Timestamp created_at = 8;   // UTC
+  int32 comments_count = 9;
+}
+
+message ReviewsReply {
+  repeated ReviewReply reviews = 1;
+}

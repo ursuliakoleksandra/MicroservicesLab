@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+// Контракт читання даних каталогу для внутрішніх сервісів (Aggregator).
+// ПРАВИЛО: номери полів ніколи не змінюються й не перевикористовуються після публікації — саме вони, а не імена,
+// визначають бінарний формат повідомлення. Видалене поле позначається `reserved`.
+
+option csharp_namespace = "Catalog.Contracts";   // не "Catalog.Grpc": простір імен Grpc затьмарив би Grpc.Core
+
+package catalog;
+
+service CatalogService {
+  // Картка товару за Id. Не знайдено -> NotFound, Id <= 0 -> InvalidArgument.
+  rpc GetProduct (GetProductRequest) returns (ProductReply);
+
+  // Кілька товарів за один виклик (один RTT замість N). Неіснуючі Id пропускаються.
+  rpc GetProductsByIds (GetProductsByIdsRequest) returns (ProductsReply);
+}
+
+message GetProductRequest {
+  int64 id = 1;
+}
+
+message GetProductsByIdsRequest {
+  repeated int64 ids = 1;
+}
+
+// Гроші без втрат точності: ціле + наносекундна частка (як google.type.Money без поля currency).
+message Money {
+  int64 units = 1;   // ціла частина
+  int32 nanos = 2;   // дробова частина, 0..999 999 999
+}
+
+message ProductReply {
+  int64 id = 1;
+  string name = 2;
+  string sku = 3;
+  Money price = 4;
+  int32 available_stock = 5;
+  bool is_active = 6;
+}
+
+message ProductsReply {
+  repeated ProductReply products = 1;
+}

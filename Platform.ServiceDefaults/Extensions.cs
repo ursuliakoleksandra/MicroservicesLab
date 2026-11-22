@@ -25,6 +25,9 @@ public static class Extensions
     private const string AlivenessEndpointPath = "/alive";
 
     /// <summary>Імена ActivitySource, які реєструються в трасуванні (власні spans бізнес-операцій).</summary>
+    /// <summary>Meter-и кешу: Catalog (L1 + L2) і Aggregator (агрегована відповідь в Redis).</summary>
+    private static readonly string[] CacheMeters = ["Catalog.Cache", "Aggregator.Cache"];
+
     private static readonly string[] CustomActivitySources = ["Orders.Api", "Catalog.Api", "Reviews.WebApi", "Platform.Aggregator"];
 
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
@@ -40,8 +43,26 @@ public static class Extensions
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddTransient<CorrelationIdHandler>();
 
+        var isDevelopment = builder.Environment.IsDevelopment();
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
+            // Лаб. 06: gRPC-клієнти створюються тією ж фабрикою HttpClient, тому отримують і service discovery,
+            // і resilience, і CorrelationId (він іде в HTTP/2-заголовки = метадані gRPC-виклику).
+            http.ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                var handler = new SocketsHttpHandler
+                {
+                    // рекомендації щодо продуктивності gRPC: тримати з'єднання й не втрачати його через простій
+                    PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan,
+                    KeepAlivePingDelay = TimeSpan.FromSeconds(60),
+                    KeepAlivePingTimeout = TimeSpan.FromSeconds(30),
+                    EnableMultipleHttp2Connections = true
+                };
+                // лише Development: сервіси спілкуються по HTTPS із dev-сертифікатом, який може бути не довіреним
+                if (isDevelopment) handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+                return handler;
+            });
+
             http.AddStandardResilienceHandler(o =>
             {
                 o.Retry.MaxRetryAttempts = 2;                      // менше повторів — часткова відповідь Aggregator приходить швидше
@@ -99,7 +120,9 @@ public static class Extensions
             .WithMetrics(metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
-                .AddRuntimeInstrumentation())
+                .AddRuntimeInstrumentation()
+                .AddMeter(CacheMeters)                       // cache.hits / cache.misses та ін. (Лаб. 06, ч. 6.3)
+                .AddMeter("Grpc.AspNetCore.Server", "Grpc.Net.Client"))   // метрики gRPC-викликів
             .WithTracing(tracing =>
             {
                 tracing

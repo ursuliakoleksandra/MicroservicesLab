@@ -8,6 +8,10 @@ using Catalog.Dal.Seed;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Catalog.Api.Caching;
+using Catalog.Api.GrpcServices;
+using Platform.Caching;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Platform.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -32,6 +36,21 @@ builder.Services.AddDbContext<CatalogDbContext>(options =>
         options.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
 });
 
+// ---------- Лаб. 06: кеш. L1 = IMemoryCache (SizeLimit), L2 = Redis (IDistributedCache) через Aspire ----------
+builder.Services.AddMemoryCache(o =>
+{
+    o.SizeLimit = 10_000;              // у «одиницях» Size записів (CachePolicy.Size), а не в байтах
+    o.TrackStatistics = true;          // розмір і заповненість L1 -> метрики та health check
+});
+
+if (!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("redis")))
+    builder.AddRedisDistributedCache("redis");                // ConnectionStrings:redis передає AppHost (WithReference)
+else
+    builder.Services.AddDistributedMemoryCache();             // запуск без Aspire: L2 — у пам'яті процесу
+
+builder.Services.AddTwoLevelCache("Catalog.Cache");           // ITwoLevelCache + метрики cache.hits / cache.misses
+builder.Services.AddHostedService<CacheWarmupService>();      // прогрівання довідників і перших товарів
+
 // ---------- DI: Unit of Work (Scoped = один DbContext на запит) і сервіси ----------
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IProductService, ProductService>();
@@ -52,6 +71,14 @@ builder.Services.AddControllers();                    // DataAnnotations -> ав
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
     ctx.ProblemDetails.Extensions["traceId"] = ctx.HttpContext.TraceIdentifier);
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+
+// ---------- Лаб. 06: gRPC (HTTP/2; ALPN на HTTPS-endpoint) + interceptor логування викликів ----------
+builder.Services.AddGrpc(o => o.Interceptors.Add<GrpcLoggingInterceptor>());
+
+// gRPC працює поверх HTTP/2. Один endpoint обслуговує і REST (HTTP/1.1 через Gateway), і gRPC: на HTTPS протокол
+// узгоджується автоматично (ALPN). Без TLS для gRPC потрібен окремий endpoint лише з HTTP/2.
+builder.WebHost.ConfigureKestrel(k => k.ConfigureEndpointDefaults(l => l.Protocols = HttpProtocols.Http1AndHttp2));
+builder.Services.AddHealthChecks().AddCheck<CacheHealthCheck>("cache");
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -79,6 +106,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+app.MapGrpcService<CatalogGrpcService>();
 app.MapDefaultEndpoints();         // /health і /alive
 app.Run();
 

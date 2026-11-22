@@ -22,6 +22,9 @@
     <!-- SqlClient покриває і Dapper (Лаб. 02), і EF Core (Лаб. 03); пакет досі має статус beta -->
     <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.12.0-beta.1" />
 
+    <!-- Лаб. 06: серверний interceptor для логування gRPC-викликів -->
+    <PackageReference Include="Grpc.AspNetCore.Server" Version="2.71.0" />
+
     <!-- service discovery + resilience для HttpClient (є в шаблоні ServiceDefaults) -->
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.9.0" />
     <PackageReference Include="Microsoft.Extensions.ServiceDiscovery" Version="9.5.0" />

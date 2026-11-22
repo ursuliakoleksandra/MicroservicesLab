@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Platform.Aggregator\Platform.Aggregator.csproj" />
     <ProjectReference Include="..\Platform.ServiceDefaults\Platform.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\Platform.Caching\Platform.Caching.csproj" />
   </ItemGroup>
 </Project>

@@ -1,16 +1,22 @@
 using AutoMapper;
+using Catalog.Bll.Caching;
 using Catalog.Bll.Dtos;
 using Catalog.Dal.Interfaces;
 using Catalog.Domain.Entities;
 using Catalog.Domain.Exceptions;
 using Microsoft.Extensions.Logging;
+using Platform.Caching;
 
 namespace Catalog.Bll.Services;
 
-public sealed class CategoryService(IUnitOfWork uow, IMapper mapper, ILogger<CategoryService> logger) : ICategoryService
+public sealed class CategoryService(IUnitOfWork uow, IMapper mapper, ILogger<CategoryService> logger, ITwoLevelCache cache)
+    : ICategoryService
 {
+    // довідник: читають постійно, змінюється рідко -> довгий absolute TTL
     public async Task<IReadOnlyList<CategoryDto>> GetAllAsync(CancellationToken ct) =>
-        mapper.Map<List<CategoryDto>>(await uow.Categories.GetAllAsync(ct));
+        (await cache.GetOrCreateAsync<IReadOnlyList<CategoryDto>>(CatalogCacheKeys.Categories,
+            async innerCt => mapper.Map<List<CategoryDto>>(await uow.Categories.GetAllAsync(innerCt)),
+            CatalogCachePolicies.Reference, ct))!;
 
     public async Task<CategoryDto> GetByIdAsync(long id, CancellationToken ct) =>
         mapper.Map<CategoryDto>(await uow.Categories.GetByIdAsync(id, ct)
@@ -42,15 +48,18 @@ public sealed class CategoryService(IUnitOfWork uow, IMapper mapper, ILogger<Cat
 
         await uow.Categories.AddAsync(category, ct);
         await uow.SaveChangesAsync(ct);
+        await cache.RemoveAsync(CatalogCacheKeys.Categories, "CategoryCreated", ct);
         logger.LogInformation("Category {CategoryId} created", category.Id);
         return mapper.Map<CategoryDto>(category);
     }
 }
 
-public sealed class BrandService(IUnitOfWork uow, IMapper mapper) : IBrandService
+public sealed class BrandService(IUnitOfWork uow, IMapper mapper, ITwoLevelCache cache) : IBrandService
 {
     public async Task<IReadOnlyList<BrandDto>> GetAllAsync(CancellationToken ct) =>
-        mapper.Map<List<BrandDto>>(await uow.Brands.GetAllAsync(ct));
+        (await cache.GetOrCreateAsync<IReadOnlyList<BrandDto>>(CatalogCacheKeys.Brands,
+            async innerCt => mapper.Map<List<BrandDto>>(await uow.Brands.GetAllAsync(innerCt)),
+            CatalogCachePolicies.Reference, ct))!;
 
     public async Task<BrandDto> CreateAsync(CreateBrandDto input, CancellationToken ct)
     {
@@ -60,6 +69,7 @@ public sealed class BrandService(IUnitOfWork uow, IMapper mapper) : IBrandServic
 
         await uow.Brands.AddAsync(brand, ct);
         await uow.SaveChangesAsync(ct);
+        await cache.RemoveAsync(CatalogCacheKeys.Brands, "BrandCreated", ct);
         return mapper.Map<BrandDto>(brand);
     }
 }

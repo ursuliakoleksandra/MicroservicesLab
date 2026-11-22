@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Grpc.Core;
 using Platform.Aggregator.Clients;
 using Platform.Aggregator.Models;
 
@@ -75,10 +76,19 @@ public sealed class OrderAggregationService(
         {
             return await TimedAsync(service, what, call);
         }
-        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+        catch (RpcException ex) when (!ct.IsCancellationRequested && ex.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded)
         {
-            // збій сервісу (HttpRequestException, timeout, відкритий circuit breaker) -> часткова відповідь.
-            // Якщо скасував клієнт (ct) — виняток іде далі, щоб зупинити решту роботи.
+            // gRPC: сервіс недоступний (Unavailable) або не встиг відповісти за дедлайн (DeadlineExceeded) -> часткова відповідь, а не 500
+            logger.LogWarning(ex, "{Service} gRPC call failed with {GrpcStatus} after {Elapsed} ms", service, ex.StatusCode, sw.ElapsedMilliseconds);
+            var reason = ex.StatusCode == StatusCode.DeadlineExceeded ? "timed out" : "is unavailable";
+            lock (warnings) warnings.Add($"{service} {reason}");
+            return default;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // збій сервісу (RpcException Unavailable/DeadlineExceeded, HttpRequestException, timeout, відкритий circuit breaker)
+            // -> часткова відповідь. Якщо скасував клієнт (ct) — виняток іде далі й зупиняє решту роботи
+            // (gRPC-клієнт у такому разі теж кидає RpcException/OperationCanceledException, тому перевіряємо саме токен).
             logger.LogWarning(ex, "{Service} is unavailable after {Elapsed} ms: {Reason}", service, sw.ElapsedMilliseconds, ex.Message);
             lock (warnings) warnings.Add($"{service} is unavailable");
             return default;

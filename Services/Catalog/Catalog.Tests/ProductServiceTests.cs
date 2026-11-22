@@ -8,6 +8,7 @@ using Catalog.Domain.Entities;
 using Catalog.Domain.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Platform.Caching;
 using NSubstitute;
 using Xunit;
 
@@ -25,7 +26,7 @@ public class ProductServiceTests
     {
         _uow.Products.Returns(_products);
         _uow.Brands.Returns(_brands);
-        _sut = new ProductService(_uow, CreateMapper(), NullLogger<ProductService>.Instance);
+        _sut = new ProductService(_uow, CreateMapper(), NullLogger<ProductService>.Instance, NullTwoLevelCache.Instance);
     }
 
     private static ServiceProvider BuildProvider()

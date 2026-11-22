@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using Grpc.Core;
 using NSubstitute.ExceptionExtensions;
 using Platform.Aggregator.Clients;
 using Platform.Aggregator.Models;
@@ -59,6 +60,21 @@ public class AggregationServiceTests
         Assert.Equal(2, result.Products.Count);
         Assert.Empty(result.Reviews);
         Assert.Contains("reviews-api is unavailable", result.Warnings);
+    }
+
+    [Theory]
+    [InlineData(StatusCode.Unavailable, "reviews-api is unavailable")]
+    [InlineData(StatusCode.DeadlineExceeded, "reviews-api timed out")]
+    public async Task GrpcStatus_UnavailableOrDeadlineExceeded_BecomesWarning_NotException(StatusCode code, string expectedWarning)
+    {
+        _reviews.GetForProductsAsync(Arg.Any<IReadOnlyCollection<long>>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new RpcException(new Status(code, "boom")));
+
+        var result = await _sut.GetFullOrderAsync(1, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Contains(expectedWarning, result.Warnings);
+        Assert.Equal(2, result.Products.Count);
     }
 
     [Fact]
