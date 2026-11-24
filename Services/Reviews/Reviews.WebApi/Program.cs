@@ -5,7 +5,9 @@ using Reviews.Infrastructure;
 using Reviews.WebApi.ErrorHandling;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Platform.ServiceDefaults;
+using MediatR;
 using Reviews.WebApi.GrpcServices;
+using Reviews.WebApi.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +26,11 @@ builder.Services.AddAutoMapper(cfg =>
 
 // ---------- Web API ----------
 builder.Services.AddControllers();
+
+// Лаб. 07: бізнес-метрики (Singleton, Meter "Reviews.Api"); MetricsBehavior — найближчий до обробника behavior MediatR
+builder.Services.AddSingleton<ReviewMetrics>();
+builder.Services.AddScoped(typeof(IPipelineBehavior<,>), typeof(MetricsBehavior<,>));
+builder.Services.AddGrpcHealthChecks(o => o.Services.MapService("", r => r.Tags.Contains("ready")));
 
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
     ctx.ProblemDetails.Extensions["traceId"] = ctx.HttpContext.TraceIdentifier);
@@ -53,6 +60,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapControllers();
 app.MapGrpcService<ReviewsGrpcService>();
+app.MapGrpcHealthChecksService();     // grpc.health.v1.Health: використовує Aggregator
 app.MapDefaultEndpoints();         // /health (у т.ч. перевірка MongoDB) і /alive
 app.Run();
 

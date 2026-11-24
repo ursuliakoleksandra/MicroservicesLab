@@ -33,14 +33,17 @@ var ordersDbInit = builder.AddProject<Projects.Platform_DbInit>("orders-db-init"
 // Профіль запуску "https": сервіс слухає і HTTP (REST через Gateway), і HTTPS (gRPC від Aggregator, HTTP/2 через ALPN).
 var orders = builder.AddProject<Projects.Orders_Api>("orders-api", launchProfileName: "https")
     .WithReference(ordersDb).WaitFor(ordersDb)
-    .WaitForCompletion(ordersDbInit);                        // стартує лише після застосування схеми
+    .WaitForCompletion(ordersDbInit)                         // стартує лише після застосування схеми
+    .WithHttpHealthCheck("/health", endpointName: "http");   // Лаб. 07: Dashboard показує Healthy/Degraded/Unhealthy; WaitFor чекає Healthy
 
 var catalog = builder.AddProject<Projects.Catalog_Api>("catalog-api", launchProfileName: "https")
     .WithReference(catalogDb).WaitFor(catalogDb)
-    .WithReference(redis).WaitFor(redis);                    // L2-кеш
+    .WithReference(redis).WaitFor(redis)                     // L2-кеш
+    .WithHttpHealthCheck("/health", endpointName: "http");
 
 var reviews = builder.AddProject<Projects.Reviews_WebApi>("reviews-api", launchProfileName: "https")
-    .WithReference(reviewsDb).WaitFor(reviewsDb);
+    .WithReference(reviewsDb).WaitFor(reviewsDb)
+    .WithHttpHealthCheck("/health", endpointName: "http");
 
 // ---------- Aggregator: gRPC-клієнт сервісів + кеш агрегованих відповідей у Redis ----------
 // Транспорт можна перемкнути для порівняння затримок: dotnet run --project Platform.AppHost -- --Aggregator:Transport=Http
@@ -48,13 +51,15 @@ var aggregator = builder.AddProject<Projects.Platform_Aggregator>("aggregator")
     .WithEnvironment("Aggregator__Transport", builder.Configuration["Aggregator:Transport"] ?? "Grpc")
     .WithReference(orders).WithReference(catalog).WithReference(reviews)
     .WithReference(redis)
-    .WaitFor(orders).WaitFor(catalog).WaitFor(reviews).WaitFor(redis);
+    .WaitFor(orders).WaitFor(catalog).WaitFor(reviews).WaitFor(redis)   // WaitFor тепер чекає Healthy (є WithHttpHealthCheck), а не лише Running
+    .WithHttpHealthCheck("/health");
 
 // ---------- Gateway: єдина точка входу з фіксованим портом 5000 ----------
 builder.AddProject<Projects.Platform_ApiGateway>("gateway")
     .WithHttpEndpoint(port: 5000, name: "public")
     .WithExternalHttpEndpoints()
     .WithReference(orders).WithReference(catalog).WithReference(reviews).WithReference(aggregator)
-    .WaitFor(aggregator);
+    .WaitFor(aggregator)
+    .WithHttpHealthCheck("/health", endpointName: "public");
 
 builder.Build().Run();

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Grpc.Core;
+using Platform.Aggregator.Metrics;
 using Platform.Aggregator.Clients;
 using Platform.Aggregator.Models;
 
@@ -17,7 +18,8 @@ public interface IOrderAggregationService
 /// CancellationToken передається в усі виклики; Task.WaitAll і .Result не використовуються.
 /// </summary>
 public sealed class OrderAggregationService(
-    IOrdersClient orders, ICatalogClient catalog, IReviewsClient reviews, ILogger<OrderAggregationService> logger)
+    IOrdersClient orders, ICatalogClient catalog, IReviewsClient reviews, ILogger<OrderAggregationService> logger,
+    AggregatorMetrics metrics)
     : IOrderAggregationService
 {
     private static readonly ActivitySource Source = new("Platform.Aggregator");
@@ -82,6 +84,7 @@ public sealed class OrderAggregationService(
             logger.LogWarning(ex, "{Service} gRPC call failed with {GrpcStatus} after {Elapsed} ms", service, ex.StatusCode, sw.ElapsedMilliseconds);
             var reason = ex.StatusCode == StatusCode.DeadlineExceeded ? "timed out" : "is unavailable";
             lock (warnings) warnings.Add($"{service} {reason}");
+            metrics.DependencyFailed(service, ex.StatusCode == StatusCode.DeadlineExceeded ? "timeout" : "unavailable");
             return default;
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -91,6 +94,13 @@ public sealed class OrderAggregationService(
             // (gRPC-клієнт у такому разі теж кидає RpcException/OperationCanceledException, тому перевіряємо саме токен).
             logger.LogWarning(ex, "{Service} is unavailable after {Elapsed} ms: {Reason}", service, sw.ElapsedMilliseconds, ex.Message);
             lock (warnings) warnings.Add($"{service} is unavailable");
+            metrics.DependencyFailed(service, ex switch
+            {
+                TimeoutException or TaskCanceledException or OperationCanceledException => "timeout",
+                _ when ex.GetType().Name.Contains("BrokenCircuit") => "circuit_open",          // circuit breaker розімкнено: fail-fast
+                HttpRequestException => "unavailable",
+                _ => "error"
+            });
             return default;
         }
     }

@@ -10,6 +10,8 @@
   <ItemGroup>
     <!-- Лаб. 06: gRPC-сервер (містить Google.Protobuf і Grpc.Tools) -->
     <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+    <!-- Лаб. 07: gRPC Health Checking Protocol (перевірка MongoDB — власна легка, див. MongoHealthCheck) -->
+    <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.71.0" />
     <Protobuf Include="Protos\reviews.proto" GrpcServices="Server" />
   </ItemGroup>
   <ItemGroup>

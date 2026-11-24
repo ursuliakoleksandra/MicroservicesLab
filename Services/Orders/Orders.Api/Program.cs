@@ -1,5 +1,7 @@
 using Orders.Api.ErrorHandling;
 using Orders.Api.GrpcServices;
+using Orders.Api.HealthChecks;
+using Orders.Api.Metrics;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Platform.ServiceDefaults;
 using Orders.Bll.Mapping;
@@ -30,11 +32,16 @@ builder.Services.AddAutoMapper(cfg =>
 });
 
 // ---------- Web/API ----------
-builder.Services.AddControllers();
+// Лаб. 07: бізнес-метрики (Singleton, Meter "Orders.Api") і action filter, що їх збирає
+builder.Services.AddSingleton<OrderMetrics>();
+builder.Services.AddControllers(o => o.Filters.Add<OrderMetricsFilter>());
 
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
     ctx.ProblemDetails.Extensions["traceId"] = ctx.HttpContext.TraceIdentifier);
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+
+// ---------- Лаб. 07: health checks (SQL Server + gRPC Health Checking Protocol) ----------
+builder.Services.AddOrdersHealthChecks(connectionString);
 
 // ---------- Лаб. 06: gRPC (HTTP/2; ALPN на HTTPS-endpoint) + interceptor логування викликів ----------
 builder.Services.AddGrpc(o => o.Interceptors.Add<GrpcLoggingInterceptor>());
@@ -60,6 +67,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapControllers();
 app.MapGrpcService<OrdersGrpcService>();
+app.MapGrpcHealthChecksService();     // grpc.health.v1.Health: використовує Aggregator
 app.MapDefaultEndpoints();         // /health і /alive
 app.Run();
 

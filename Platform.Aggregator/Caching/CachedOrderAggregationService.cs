@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Platform.Aggregator.Metrics;
 using Platform.Aggregator.Models;
 using Platform.Aggregator.Services;
 using Platform.Caching;
@@ -21,7 +23,7 @@ public static class AggregatorCache
 /// інакше тимчасова відмова сервісу «застрягла б» у кеші на час TTL.
 /// </summary>
 public sealed class CachedOrderAggregationService(
-    OrderAggregationService inner, ITwoLevelCache cache, ILogger<CachedOrderAggregationService> logger)
+    OrderAggregationService inner, ITwoLevelCache cache, ILogger<CachedOrderAggregationService> logger, AggregatorMetrics metrics)
     : IOrderAggregationService
 {
     public async Task<FullOrderDto?> GetFullOrderAsync(long orderId, CancellationToken ct) =>
@@ -29,25 +31,40 @@ public sealed class CachedOrderAggregationService(
 
     public async Task<FullOrderDto?> GetFullOrderAsync(long orderId, bool refresh, CancellationToken ct)
     {
-        var key = AggregatorCache.FullOrderKey(orderId);
-
-        if (!refresh)
+        metrics.Started();
+        var sw = Stopwatch.StartNew();
+        var result = "error";
+        var fromCache = false;
+        try
         {
-            var cached = await cache.GetAsync<FullOrderDto>(key, AggregatorCache.FullOrder, ct);
-            if (cached is not null)
+            var key = AggregatorCache.FullOrderKey(orderId);
+
+            if (!refresh)
             {
-                logger.LogInformation("Aggregated order {OrderId} served from cache {Key}", orderId, key);
-                return cached;
+                var cached = await cache.GetAsync<FullOrderDto>(key, AggregatorCache.FullOrder, ct);
+                if (cached is not null)
+                {
+                    logger.LogInformation("Aggregated order {OrderId} served from cache {Key}", orderId, key);
+                    fromCache = true;
+                    result = "full";
+                    return cached;
+                }
             }
+
+            var full = await inner.GetFullOrderAsync(orderId, ct);                       // паралельні gRPC-виклики
+            result = full is null ? "not_found" : full.Warnings.Count == 0 ? "full" : "partial";
+
+            if (full is not null && full.Warnings.Count == 0)
+                await cache.SetAsync(key, full, AggregatorCache.FullOrder, ct);
+            else if (full is not null)
+                logger.LogInformation("Partial aggregated order {OrderId} ({WarningsCount} warnings) is not cached", orderId, full.Warnings.Count);
+
+            return full;
         }
-
-        var result = await inner.GetFullOrderAsync(orderId, ct);                       // паралельні gRPC-виклики
-        if (result is not null && result.Warnings.Count == 0)
-            await cache.SetAsync(key, result, AggregatorCache.FullOrder, ct);
-        else if (result is not null)
-            logger.LogInformation("Partial aggregated order {OrderId} ({WarningsCount} warnings) is not cached", orderId, result.Warnings.Count);
-
-        return result;
+        finally
+        {
+            metrics.Finished(result, fromCache, sw.Elapsed.TotalMilliseconds);          // і для невдалих, і для частково успішних
+        }
     }
 
     /// <summary>Ручна інвалідація (після змін у вихідних даних, коли не можна чекати 30 с).</summary>

@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Catalog.Api.Caching;
 using Catalog.Api.GrpcServices;
+using Catalog.Api.HealthChecks;
+using Catalog.Api.Metrics;
 using Platform.Caching;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Platform.ServiceDefaults;
@@ -44,7 +46,8 @@ builder.Services.AddMemoryCache(o =>
 });
 
 if (!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("redis")))
-    builder.AddRedisDistributedCache("redis");                // ConnectionStrings:redis передає AppHost (WithReference)
+    builder.AddRedisDistributedCache("redis",                 // ConnectionStrings:redis передає AppHost (WithReference)
+        configureSettings: settings => settings.DisableHealthChecks = true);   // власна перевірка "redis-cache" (Degraded, а не Unhealthy)
 else
     builder.Services.AddDistributedMemoryCache();             // запуск без Aspire: L2 — у пам'яті процесу
 
@@ -66,7 +69,9 @@ builder.Services.AddAutoMapper(cfg =>
 builder.Services.AddValidatorsFromAssemblyContaining<CreateProductDtoValidator>();
 
 // ---------- Web/API ----------
-builder.Services.AddControllers();                    // DataAnnotations -> автоматичний 400 ValidationProblemDetails
+// Лаб. 07: бізнес-метрики (Singleton, Meter "Catalog.Api") і action filter, що їх збирає
+builder.Services.AddSingleton<CatalogMetrics>();
+builder.Services.AddControllers(o => o.Filters.Add<CatalogMetricsFilter>());                    // DataAnnotations -> автоматичний 400 ValidationProblemDetails
 
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
     ctx.ProblemDetails.Extensions["traceId"] = ctx.HttpContext.TraceIdentifier);
@@ -78,7 +83,8 @@ builder.Services.AddGrpc(o => o.Interceptors.Add<GrpcLoggingInterceptor>());
 // gRPC працює поверх HTTP/2. Один endpoint обслуговує і REST (HTTP/1.1 через Gateway), і gRPC: на HTTPS протокол
 // узгоджується автоматично (ALPN). Без TLS для gRPC потрібен окремий endpoint лише з HTTP/2.
 builder.WebHost.ConfigureKestrel(k => k.ConfigureEndpointDefaults(l => l.Protocols = HttpProtocols.Http1AndHttp2));
-builder.Services.AddHealthChecks().AddCheck<CacheHealthCheck>("cache");
+// Лаб. 07: SQL Server, Redis (Degraded), статистика кешу та gRPC Health Checking Protocol
+builder.Services.AddCatalogHealthChecks(connectionString, builder.Configuration.GetConnectionString("redis"));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -107,6 +113,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapControllers();
 app.MapGrpcService<CatalogGrpcService>();
+app.MapGrpcHealthChecksService();     // grpc.health.v1.Health: використовує Aggregator
 app.MapDefaultEndpoints();         // /health і /alive
 app.Run();
 

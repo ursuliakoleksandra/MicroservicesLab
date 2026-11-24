@@ -19,7 +19,8 @@ public class AggregationServiceTests
 
     public AggregationServiceTests()
     {
-        _sut = new OrderAggregationService(_orders, _catalog, _reviews, NullLogger<OrderAggregationService>.Instance);
+        _sut = new OrderAggregationService(_orders, _catalog, _reviews, NullLogger<OrderAggregationService>.Instance,
+            new Platform.Aggregator.Metrics.AggregatorMetrics(new TestMeterFactory()));
 
         var order = new OrderDto(1, 1, "Paid", DateTime.UtcNow, "Чернівці", null, 100m,
             [new OrderItemDto(1, "Ноутбук X15", 50m, 0m, 1, 50m), new OrderItemDto(3, "Навушники Air", 50m, 0m, 1, 50m)]);

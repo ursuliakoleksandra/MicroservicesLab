@@ -7,6 +7,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Polly;
 using Platform.ServiceDefaults;
 using Serilog;
 using Serilog.Events;
@@ -23,10 +24,16 @@ public static class Extensions
 {
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
+    private const string LivenessPath = "/health/live";
+    private const string ReadinessPath = "/health/ready";
+    private const string StartupPath = "/health/startup";
 
     /// <summary>Імена ActivitySource, які реєструються в трасуванні (власні spans бізнес-операцій).</summary>
     /// <summary>Meter-и кешу: Catalog (L1 + L2) і Aggregator (агрегована відповідь в Redis).</summary>
     private static readonly string[] CacheMeters = ["Catalog.Cache", "Aggregator.Cache"];
+
+    /// <summary>Бізнес-метрики сервісів (Лаб. 07, ч. 2): один Meter на сервіс, ім'я = назва сервісу.</summary>
+    private static readonly string[] BusinessMeters = ["Orders.Api", "Catalog.Api", "Reviews.Api", "Platform.Aggregator"];
 
     private static readonly string[] CustomActivitySources = ["Orders.Api", "Catalog.Api", "Reviews.WebApi", "Platform.Aggregator"];
 
@@ -63,10 +70,17 @@ public static class Extensions
                 return handler;
             });
 
+            // Лаб. 07: Standard Resilience Handler підключається ЛИШЕ тут (для всіх клієнтів, включно з gRPC-клієнтами).
+            // Він поєднує (зовні всередину): rate limiter -> загальний таймаут -> retry -> circuit breaker -> таймаут спроби.
+            // Клієнт із власною політикою спершу викликає RemoveAllResilienceHandlers() — обробники не нашаровуються
+            // (див. Platform.Aggregator/Resilience).
             http.AddStandardResilienceHandler(o =>
             {
-                o.Retry.MaxRetryAttempts = 2;                      // менше повторів — часткова відповідь Aggregator приходить швидше
-                o.Retry.Delay = TimeSpan.FromMilliseconds(300);
+                o.Retry.MaxRetryAttempts = 2;                          // типово 3; менше повторів — часткова відповідь приходить швидше
+                o.Retry.Delay = TimeSpan.FromMilliseconds(300);        // типово 2 с
+                o.Retry.BackoffType = DelayBackoffType.Exponential;    // 0.3 с, 0.6 с, ...
+                o.Retry.UseJitter = true;                              // розкид затримок проти «thundering herd»
+                o.Retry.DisableForUnsafeHttpMethods();                 // POST/PUT/DELETE не повторюються: інакше можна створити замовлення двічі
             });
             http.AddServiceDiscovery();                            // http://orders-api -> реальна адреса від Aspire
             http.AddHttpMessageHandler<CorrelationIdHandler>();    // X-Correlation-Id у вихідні запити
@@ -122,7 +136,14 @@ public static class Extensions
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
                 .AddMeter(CacheMeters)                       // cache.hits / cache.misses та ін. (Лаб. 06, ч. 6.3)
-                .AddMeter("Grpc.AspNetCore.Server", "Grpc.Net.Client"))   // метрики gRPC-викликів
+                .AddMeter(BusinessMeters)                    // orders.created, products.updated, reviews.created, aggregator.* (Лаб. 07)
+                .AddMeter("Polly")                           // resilience.polly.strategy.events: OnRetry, OnCircuitOpened, OnTimeout ... (Лаб. 07, ч. 1.8)
+                .AddMeter("Grpc.AspNetCore.Server", "Grpc.Net.Client")   // метрики gRPC-викликів
+                // межі кошиків гістограм тривалості (мс): типові межі OpenTelemetry розраховані на секунди, а не на мілісекунди
+                .AddView("*.operation.duration", new ExplicitBucketHistogramConfiguration
+                {
+                    Boundaries = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+                }))
             .WithTracing(tracing =>
             {
                 tracing
@@ -148,22 +169,37 @@ public static class Extensions
 
     public static TBuilder AddDefaultHealthChecks<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
+        builder.Services.AddSingleton<StartupHealthCheck>();
+
         builder.Services.AddHealthChecks()
-            .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);   // перевірка «процес живий»
+            .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"])          // «процес живий» — liveness, без залежностей
+            .AddCheck<StartupHealthCheck>("startup", tags: ["startup"]);             // «старт завершено» — startup
 
         return builder;
     }
 
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        // як у шаблоні Aspire: лише в Development (у Production відкриття health checks — окреме рішення, Лаб. 07/10)
+        // Лаб. 07: liveness / readiness / startup окремо за ТЕГАМИ перевірок; доступні в усіх середовищах, бо їх використовують
+        // оркестратори (Kubernetes, Лаб. 10). Деталі кожної перевірки (JSON) показуються лише в Development.
+        var writer = HealthResponseWriter.Create(includeDetails: app.Environment.IsDevelopment());
+
+        // liveness: чи живий процес. БЕЗ зовнішніх залежностей (лише перевірка "self"), відповідає за мілісекунди.
+        // Збій -> оркестратор ПЕРЕЗАПУСКАЄ процес.
+        app.MapHealthChecks(LivenessPath, new HealthCheckOptions { Predicate = r => r.Tags.Contains("live"), ResponseWriter = writer });
+
+        // readiness: чи готовий приймати трафік (бази, Redis, downstream gRPC-сервіси). Degraded -> 200 (працює без кешу),
+        // Unhealthy -> 503. Збій -> оркестратор тимчасово ПРИБИРАЄ екземпляр з балансування, не перезапускаючи його.
+        app.MapHealthChecks(ReadinessPath, new HealthCheckOptions { Predicate = r => r.Tags.Contains("ready"), ResponseWriter = writer });
+
+        // startup: чи завершився старт (міграції, сідінг, прогрівання) — для сервісів із повільним стартом
+        app.MapHealthChecks(StartupPath, new HealthCheckOptions { Predicate = r => r.Tags.Contains("startup"), ResponseWriter = writer });
+
+        // як у шаблоні Aspire: /health (усі перевірки) та /alive — лише в Development
         if (app.Environment.IsDevelopment())
         {
-            app.MapHealthChecks(HealthEndpointPath);                              // усі перевірки (у т.ч. MongoDB у Reviews)
-            app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
-            {
-                Predicate = r => r.Tags.Contains("live")
-            });
+            app.MapHealthChecks(HealthEndpointPath, new HealthCheckOptions { ResponseWriter = writer });
+            app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions { Predicate = r => r.Tags.Contains("live") });
         }
 
         return app;

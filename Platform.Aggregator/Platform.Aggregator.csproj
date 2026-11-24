@@ -9,6 +9,10 @@
 
     <!-- кеш агрегованих відповідей у Redis -->
     <PackageReference Include="Aspire.StackExchange.Redis.DistributedCaching" Version="9.5.0" />
+
+    <!-- Лаб. 07: health checks — gRPC Health Checking Protocol (клієнт) і Redis -->
+    <PackageReference Include="Grpc.HealthCheck" Version="2.71.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
   </ItemGroup>
 
   <!-- ті самі .proto-файли, що й у сервісах, але лише КЛІЄНТСЬКА частина (контракт один — копій немає) -->

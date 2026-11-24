@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Reviews.Application.Common.Interfaces;
 using Reviews.Domain.Interfaces;
 using Reviews.Infrastructure.Persistence;
@@ -33,7 +34,13 @@ public static class DependencyInjection
         services.AddHostedService<IndexCreationService>();
         services.AddHostedService<DataSeedingService>();
 
-        services.AddHealthChecks().AddCheck<MongoHealthCheck>("mongodb");
+        // Лаб. 07: перевірка MongoDB з іменем, тегами й таймаутом. Легка (команда ping, без читання даних).
+        // Власна реалізація замість AspNetCore.HealthChecks.MongoDb: вона збігається з версією драйвера MongoDB.Driver 3.x, яку вже використовує сервіс.
+        services.AddHealthChecks().AddCheck<MongoHealthCheck>(
+            name: "reviews-db",
+            failureStatus: HealthStatus.Unhealthy,
+            tags: ["database", "mongodb", "ready"],
+            timeout: TimeSpan.FromSeconds(5));
         return services;
     }
 }

@@ -35,8 +35,9 @@ public class CachedAggregationTests
         var cache = new TwoLevelCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 10 }),
             new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())),
             new CacheMetrics(new Meter("Tests.Aggregator.Cache." + Guid.NewGuid())), NullLogger<TwoLevelCache>.Instance);
-        var inner = new OrderAggregationService(_orders, _catalog, _reviews, NullLogger<OrderAggregationService>.Instance);
-        _sut = new CachedOrderAggregationService(inner, cache, NullLogger<CachedOrderAggregationService>.Instance);
+        var metrics = new Platform.Aggregator.Metrics.AggregatorMetrics(new TestMeterFactory());
+        var inner = new OrderAggregationService(_orders, _catalog, _reviews, NullLogger<OrderAggregationService>.Instance, metrics);
+        _sut = new CachedOrderAggregationService(inner, cache, NullLogger<CachedOrderAggregationService>.Instance, metrics);
     }
 
     [Fact]

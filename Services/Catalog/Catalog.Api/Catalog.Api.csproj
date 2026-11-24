@@ -8,6 +8,10 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
     <!-- Лаб. 06: gRPC-сервер (містить Google.Protobuf і Grpc.Tools) та IDistributedCache поверх Redis через Aspire -->
     <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+    <!-- Лаб. 07: health checks — SQL Server, Redis і gRPC Health Checking Protocol -->
+    <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.71.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.SqlServer" Version="9.0.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
     <PackageReference Include="Aspire.StackExchange.Redis.DistributedCaching" Version="9.5.0" />
   </ItemGroup>
   <ItemGroup>

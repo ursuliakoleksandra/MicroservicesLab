@@ -4,7 +4,7 @@ using MongoDB.Driver;
 
 namespace Reviews.Infrastructure.Persistence;
 
-/// <summary>Health check підключення до MongoDB (команда ping). Детально health checks — у Лаб. 07.</summary>
+/// <summary>Легка перевірка MongoDB (Лаб. 07, ч. 3.2): команда ping, без читання даних; таймаут задає реєстрація (5 с).</summary>
 public class MongoHealthCheck(MongoDbContext context) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext healthContext, CancellationToken ct = default)

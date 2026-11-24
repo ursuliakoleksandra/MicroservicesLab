@@ -2,7 +2,12 @@ using System.Text.Json.Serialization;
 using Catalog.Contracts;
 using Orders.Contracts;
 using Platform.Aggregator.Caching;
+using Grpc.Health.V1;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Platform.Aggregator.Clients;
+using Platform.Aggregator.HealthChecks;
+using Platform.Aggregator.Metrics;
+using Platform.Aggregator.Resilience;
 using Platform.Aggregator.Services;
 using Platform.Caching;
 using Platform.ServiceDefaults;
@@ -18,21 +23,32 @@ var transport = builder.Configuration["Aggregator:Transport"] ?? "Grpc";
 if (string.Equals(transport, "Http", StringComparison.OrdinalIgnoreCase))
 {
     // Typed HttpClients: адреси за логічними іменами ресурсів AppHost ("https+http" = HTTPS, якщо є, інакше HTTP)
-    builder.Services.AddHttpClient<IOrdersClient, OrdersClient>(c => c.BaseAddress = new("https+http://orders-api"));
-    builder.Services.AddHttpClient<ICatalogClient, CatalogClient>(c => c.BaseAddress = new("https+http://catalog-api"));
-    builder.Services.AddHttpClient<IReviewsClient, ReviewsClient>(c => c.BaseAddress = new("https+http://reviews-api"));
+    // Resilience: стандартний обробник з ServiceDefaults замінюється профілем сервісу (RemoveAllResilienceHandlers усередині) —
+    // критичні Замовлення й Каталог мають більше повторів і чутливіший breaker, некритичні Відгуки швидко «здаються».
+    builder.Services.AddHttpClient<IOrdersClient, OrdersClient>(c => c.BaseAddress = new("https+http://orders-api"))
+        .AddServiceResilience(ServiceProfiles.Orders);
+    builder.Services.AddHttpClient<ICatalogClient, CatalogClient>(c => c.BaseAddress = new("https+http://catalog-api"))
+        .AddServiceResilience(ServiceProfiles.Catalog);
+    builder.Services.AddHttpClient<IReviewsClient, ReviewsClient>(c => c.BaseAddress = new("https+http://reviews-api"))
+        .AddServiceResilience(ServiceProfiles.Reviews);
 }
 else
 {
     // Типізовані gRPC-клієнти, згенеровані з .proto. gRPC потребує HTTP/2 -> HTTPS-endpoint сервісу (ALPN).
     // Клієнти створює та сама фабрика HttpClient, тож діють service discovery, resilience і CorrelationIdHandler
     // (X-Correlation-Id іде в метадані виклику без жодного коду в Aggregator). Канал мультиплексує паралельні виклики.
+    //
+    // Лаб. 07: для кожного клієнта (1) retry за gRPC-СТАТУСАМИ (ServiceConfig каналу: HTTP-обробник їх не бачить, бо статус іде
+    // в трейлерах відповіді з HTTP 200) і (2) HTTP-рівень (мережеві збої, таймаути, circuit breaker) за профілем сервісу.
     builder.Services.AddGrpcClient<OrdersService.OrdersServiceClient>(o => o.Address = new Uri("https://orders-api"))
-        .ConfigureChannel(o => o.ThrowOperationCanceledOnCancellation = true);
+        .AddGrpcRetryPolicy(ServiceProfiles.Orders)
+        .AddServiceResilience(ServiceProfiles.Orders, forGrpc: true);
     builder.Services.AddGrpcClient<CatalogService.CatalogServiceClient>(o => o.Address = new Uri("https://catalog-api"))
-        .ConfigureChannel(o => o.ThrowOperationCanceledOnCancellation = true);
+        .AddGrpcRetryPolicy(ServiceProfiles.Catalog)
+        .AddServiceResilience(ServiceProfiles.Catalog, forGrpc: true);
     builder.Services.AddGrpcClient<ReviewsService.ReviewsServiceClient>(o => o.Address = new Uri("https://reviews-api"))
-        .ConfigureChannel(o => o.ThrowOperationCanceledOnCancellation = true);
+        .AddGrpcRetryPolicy(ServiceProfiles.Reviews)
+        .AddServiceResilience(ServiceProfiles.Reviews, forGrpc: true);
 
     builder.Services.AddTransient<IOrdersClient, GrpcOrdersClient>();
     builder.Services.AddTransient<ICatalogClient, GrpcCatalogClient>();
@@ -42,10 +58,32 @@ else
 // ---------- кеш агрегованих відповідей: лише Redis (L1 вимкнено політикою), TTL 30 с ----------
 builder.Services.AddMemoryCache(o => o.SizeLimit = 1_000);        // потрібен ITwoLevelCache, хоча L1 тут не використовується
 if (!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("redis")))
-    builder.AddRedisDistributedCache("redis");                    // ConnectionStrings:redis передає AppHost
+    builder.AddRedisDistributedCache("redis",                     // ConnectionStrings:redis передає AppHost
+        configureSettings: settings => settings.DisableHealthChecks = true);   // власна перевірка "redis-cache" нижче (Degraded, а не Unhealthy)
 else
     builder.Services.AddDistributedMemoryCache();                 // запуск без Aspire
 builder.Services.AddTwoLevelCache("Aggregator.Cache");
+
+builder.Services.AddSingleton<AggregatorMetrics>();               // Лаб. 07: бізнес-метрики (IMeterFactory, Meter "Platform.Aggregator")
+
+// ---------- Лаб. 07: health checks залежностей (readiness) ----------
+// gRPC Health Checking Protocol: клієнти Health.HealthClient за іменами; критичні сервіси -> Unhealthy, некритичний (Відгуки) -> Degraded
+builder.Services.AddGrpcClient<Health.HealthClient>("orders-health", o => o.Address = new Uri("https://orders-api"));
+builder.Services.AddGrpcClient<Health.HealthClient>("catalog-health", o => o.Address = new Uri("https://catalog-api"));
+builder.Services.AddGrpcClient<Health.HealthClient>("reviews-health", o => o.Address = new Uri("https://reviews-api"));
+
+var healthChecks = builder.Services.AddHealthChecks()
+    .AddTypeActivatedCheck<GrpcDependencyHealthCheck>("orders-api", failureStatus: HealthStatus.Unhealthy,
+        tags: ["grpc", "downstream", "ready"], args: ["orders-health", "orders-api", HealthStatus.Unhealthy])
+    .AddTypeActivatedCheck<GrpcDependencyHealthCheck>("catalog-api", failureStatus: HealthStatus.Unhealthy,
+        tags: ["grpc", "downstream", "ready"], args: ["catalog-health", "catalog-api", HealthStatus.Unhealthy])
+    .AddTypeActivatedCheck<GrpcDependencyHealthCheck>("reviews-api", failureStatus: HealthStatus.Degraded,
+        tags: ["grpc", "downstream", "ready"], args: ["reviews-health", "reviews-api", HealthStatus.Degraded]);
+
+var redisConnection = builder.Configuration.GetConnectionString("redis");
+if (!string.IsNullOrWhiteSpace(redisConnection))
+    healthChecks.AddRedis(redisConnection, name: "redis-cache", failureStatus: HealthStatus.Degraded,   // кеш необов'язковий: без нього сервіс працює
+        tags: ["cache", "redis", "ready"], timeout: TimeSpan.FromSeconds(3));
 
 builder.Services.AddScoped<OrderAggregationService>();
 builder.Services.AddScoped<CachedOrderAggregationService>();
@@ -64,6 +102,7 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+ResilienceLog.Factory = app.Services.GetRequiredService<ILoggerFactory>();   // логування переходів circuit breaker
 app.Logger.LogInformation("Aggregator transport to microservices: {Transport}", transport);
 
 app.UseMiddleware<CorrelationIdMiddleware>();

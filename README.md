@@ -8,6 +8,7 @@
 | № 04 | Мікросервіс «Відгуки»: Clean Architecture, CQRS/MediatR, Value Objects, MongoDB | [Частина 4](#частина-4--мікросервіс-відгуки-clean-architecture--mongodb-лаб-04) |
 | № 05 | Платформа на .NET Aspire: AppHost, ServiceDefaults (Serilog + OpenTelemetry), YARP Gateway, Aggregator | [Частина 5](#частина-5--мікросервісна-платформа-net-aspire-лаб-05) |
 | № 06 | gRPC-контракти (Protocol Buffers), кеш L1 (пам'ять) + L2 (Redis), Aggregator на gRPC | [Частина 6](#частина-6--grpc-та-кешування-лаб-06) |
+| № 07 | Resilience (retry, circuit breaker, таймаути), бізнес-метрики, health checks | [Частина 7](#частина-7--resilience-метрики-та-health-checks-лаб-07) |
 
 # Частина 1 — три бази даних (Лаб. 01)
 
@@ -1208,3 +1209,197 @@ curl -i "http://localhost:5000/api/aggregator/orders/1/full?refresh=true"
 * **CorrelationId у gRPC.** `CorrelationIdHandler` у `ConfigureHttpClientDefaults` додає заголовок до HTTP/2-запиту (= метадані виклику); на сервері його читає той самий `CorrelationIdMiddleware`.
 * **Trace gRPC.** Клієнтський span створює інструментація `HttpClient`, серверний — ASP.NET Core; контекст передається заголовком `traceparent`, тому spans в одному trace.
 * **Чому часткову відповідь не кешують.** Тимчасова відмова сервісу «застрягла б» у кеші на весь TTL, хоча сервіс уже міг відновитися.
+
+---
+
+# Частина 7 — resilience, метрики та health checks (Лаб. 07)
+
+Платформа з Лаб. 05–06 отримала: політики resilience, що відрізняються для критичних (Каталог, Замовлення) і некритичних (Відгуки) сервісів;
+retry gRPC-клієнтів за gRPC-статусами; бізнес-метрики через `Meter` у кожному сервісі; health checks усіх залежностей
+з окремими liveness / readiness / startup та показом стану ресурсів у Dashboard.
+
+> **Виправлення Лаб. 5.** У `Platform.Aggregator` не було `launchSettings.json`, тому Aspire не створював для нього http-endpoint, а Gateway
+> звертається до `http://aggregator`. Додано `Properties/launchSettings.json` (http://localhost:5200).
+
+## 48. Resilience
+
+**Один обробник, без нашарування.** Standard Resilience Handler підключається **лише** в `ConfigureHttpClientDefaults` (ServiceDefaults) і діє на всі
+`HttpClient`, включно з gRPC-клієнтами (їх створює та сама фабрика). Клієнти Aggregator з власною політикою спершу викликають
+`RemoveAllResilienceHandlers()` і лише потім `AddStandardResilienceHandler(...)` (`ResilienceExtensions.AddServiceResilience`).
+Порядок стратегій (зовні всередину): rate limiter → загальний таймаут → retry → circuit breaker → таймаут спроби.
+
+**Типові значення ServiceDefaults:** retry 2 повтори від 300 мс, експоненційно, з jitter, **без повторів для небезпечних методів**
+(`Retry.DisableForUnsafeHttpMethods()` — POST/PUT/DELETE не повторюються, інакше замовлення могло б створитися двічі).
+
+**Чому HTTP-обробник не повторює gRPC `Unavailable`.** gRPC повертає помилку як статус у трейлерах відповіді з HTTP 200; для HTTP-обробника це «успіх».
+Тому повтори за gRPC-статусами задає `ServiceConfig` каналу (`AddGrpcRetryPolicy`): `RetryPolicy` з `MaxAttempts`, `InitialBackoff`, `MaxBackoff`,
+`BackoffMultiplier = 2` і `RetryableStatusCodes = { Unavailable, ResourceExhausted }`. HTTP-рівень лишається для мережевих збоїв, таймаутів і circuit breaker.
+
+### Політики клієнтів Aggregator (обґрунтування)
+
+| Параметр | orders-api | catalog-api | reviews-api |
+|----------|-----------|-------------|-------------|
+| Критичність | **критичний** | **критичний** | некритичний |
+| HTTP retry (повторів) | 3 | **4** | 1 |
+| Затримка retry (експоненційна + jitter) | 0.5 с | 0.5 с | 0.2 с |
+| Таймаут спроби / загальний | 3 с / 20 с | 3 с / 25 с | **1.5 с / 4 с** |
+| Circuit breaker: `FailureRatio` | 0.4 | **0.3** (чутливіший) | **0.7** (толерантніший) |
+| `MinimumThroughput` / `SamplingDuration` | 10 / 30 с | 10 / 30 с | 10 / 30 с |
+| `BreakDuration` | 15 с | 15 с | 10 с |
+| gRPC retry: `MaxAttempts`, backoff | 3, 0.2→1 с | **4**, 0.2→2 с | 2, 0.1→0.5 с |
+| gRPC дедлайн виклику | 5 с | 6 с | **2 с** |
+
+* **Каталог** — критичний: без товарів картку замовлення не зібрати змістовно, тому багато повторів (читання ідемпотентні) і найчутливіший breaker — швидко припинити марні виклики.
+  Загальний таймаут вміщує повтори: 5 спроб × 3 с + затримки ≈ 22 с < 25 с.
+* **Замовлення** — критичне ядро: без замовлення нічого агрегувати, але порогів трохи м'якші, ніж у Каталогу.
+* **Відгуки** — некритичні: Aggregator і без них повертає часткову відповідь (Лаб. 05), тому краще **швидко здатися** (≤ 4 с загалом, 1 повтор), не розмикати ланцюг через поодинокі збої (0.7)
+  й не тримати дедлайн довшим за 2 с.
+* `MinimumThroughput` знижено зі 100 до 10: на навчальному стенді мало трафіку, інакше breaker не спрацював би. Для production значення підбирають за SLA й реальним навантаженням.
+* `SamplingDuration` (30 с) ≥ 2 × таймаут спроби — інакше застосунок не запуститься через валідацію опцій. Це перевіряють тести `ResilienceProfileTests`.
+* `MaxRetryAttempts` у Polly має бути ≥ 1, тому HTTP-рівень gRPC-клієнтів має 1 повтор. На HTTP-рівні gRPC-виклик — це POST, але методи Aggregator лише читають (ідемпотентні),
+  тож для gRPC-клієнтів повтор мережевих збоїв дозволено (видно як `OnRetry` у метриках Polly); для HTTP-клієнтів `DisableForUnsafeHttpMethods()` лишається. Кількість спроб обмежує дедлайн
+  виклику (2–6 с), тому повтори gRPC (`ServiceConfig`) і HTTP-обробника не множаться безмежно.
+
+**Graceful degradation Redis.** Усі операції L2 у `TwoLevelCache` обгорнуто в `try/catch`: збій логується (`L2 cache (Redis) unavailable … falling back`), рахується в `cache.errors`, рівень
+пропускається на 15 с (circuit breaker кешу), а читання йде з L1 і бази даних. Кеш — необов'язкова залежність, не частина критичного шляху.
+
+**Логи й метрики resilience.** Polly публікує події в метрику `resilience.polly.strategy.events` (Meter `Polly`, тег `event.name`: `OnRetry`, `OnCircuitOpened`, `OnCircuitHalfOpened`,
+`OnCircuitClosed`, `OnTimeout`), тривалість — `resilience.polly.strategy.attempt.duration` і `resilience.polly.pipeline.duration`, фільтр за `pipeline.name`. У логах — категорія `Polly`
+(повтор — Warning, розмикання — Error, таймаут — Error) та власні записи `Circuit breaker for {Service} OPENED / HALF-OPEN / CLOSED` (`ResilienceLog`).
+
+## 49. Бізнес-метрики
+
+Кожен сервіс має клас метрик (Singleton, `Meter` через `IMeterFactory`), який збирається на межі API: у Замовленнях і Каталозі — `IAsyncActionFilter`, у Відгуках — MediatR-behavior
+(працює і для REST, і для gRPC); бізнес-логіку не змінено. `AddMeter(...)` для всіх сервісів і `Polly` — у ServiceDefaults.
+
+| Meter | Інструмент | Тип | Теги (скінченні значення) |
+|-------|-----------|-----|---------------------------|
+| `Orders.Api` | `orders.created` | Counter | `order.status` |
+| | `orders.confirmed` / `.shipped` / `.cancelled` / `.deleted` | Counter | `order.status` |
+| | `orders.paid` | Counter | `payment.method` |
+| | `orders.operation.duration` | Histogram, мс | `operation`, `status` (success \| failure) |
+| | `orders.operations.in_flight` | ObservableGauge | — |
+| `Catalog.Api` | `products.created` / `.deleted` | Counter | — |
+| | `products.updated` | Counter | `change.type` (details \| price \| detail \| image) |
+| | `products.stock.changed` | Counter | `stock.direction` (add \| remove) |
+| | `catalog.operation.duration`, `catalog.operations.in_flight` | Histogram / Gauge | `operation`, `status` |
+| `Reviews.Api` | `reviews.created` | Counter | `review.type` (text \| video \| rating-only) |
+| | `reviews.updated` / `.deleted` / `.comments.added` | Counter | — |
+| | `reviews.operation.duration`, `reviews.operations.in_flight` | Histogram / Gauge | `operation`, `status` |
+| `Platform.Aggregator` | `aggregator.requests` | Counter | `result` (full \| partial \| not_found \| error) |
+| | `aggregator.dependency.failures` | Counter | `dependency`, `reason` (unavailable \| timeout \| circuit_open \| error) |
+| | `aggregator.operation.duration` | Histogram, мс | `result`, `cache.hit` |
+| `Catalog.Cache`, `Aggregator.Cache` | `cache.hits`, `cache.misses`, `cache.invalidations`, `cache.evictions`, `cache.errors`, `cache.operation.duration` | Лаб. 06 | `cache.level` |
+
+* **Counter** лише зростає (події), **Histogram** — розподіл значень (затримки), **ObservableGauge** — знімок поточного стану (колбек читається в момент збору метрик).
+* Тривалість записується для **всіх** виконань, включно з невдалими (`status = failure`); гістограми мають мілісекундні межі кошиків (View `*.operation.duration`).
+* **Кардинальність.** Усі теги — з невеликих скінченних множин. Ідентифікатори замовлень, товарів, відгуків і користувачів у тегах **не використовуються**: кожна унікальна комбінація тегів — окремий
+  часовий ряд, а тег з Id створив би їх мільйони. Назви тегів однакові в усіх сервісах.
+
+## 50. Health checks
+
+| Сервіс | Перевірка | Статус збою | Теги | Таймаут |
+|--------|-----------|-------------|------|---------|
+| orders-api | `orders-db` — SQL Server, `SELECT 1` | Unhealthy | `database`, `sql`, `ready` | 5 с |
+| catalog-api | `catalog-db` — SQL Server, `SELECT 1` | Unhealthy | `database`, `sql`, `ready` | 5 с |
+| catalog-api | `redis-cache` — Redis, `PING` | **Degraded** | `cache`, `redis`, `ready` | 3 с |
+| catalog-api | `cache-stats` — hit ratio, інвалідації, збої | Degraded | `cache`, `ready` | — |
+| reviews-api | `reviews-db` — MongoDB, команда `ping` | Unhealthy | `database`, `mongodb`, `ready` | 5 с |
+| aggregator | `orders-api`, `catalog-api` — gRPC Health Checking Protocol, дедлайн 2 с | Unhealthy | `grpc`, `downstream`, `ready` | — |
+| aggregator | `reviews-api` — те саме для **некритичного** сервісу | **Degraded** | `grpc`, `downstream`, `ready` | — |
+| aggregator | `redis-cache` — Redis, `PING` | **Degraded** | `cache`, `redis`, `ready` | 3 с |
+| усі | `self` (liveness), `startup` | — | `live`, `startup` | — |
+
+* **Redis → Degraded, а не Unhealthy**, бо кеш необов'язковий (graceful degradation): сервіс працює, читаючи з бази, тож оркестратор не повинен виключати його з балансування.
+  Власну перевірку Redis від Aspire вимкнено (`DisableHealthChecks`), щоб вона не робила `/health` Unhealthy.
+* **Для MongoDB** використано власну легку перевірку `ping` замість пакета `AspNetCore.HealthChecks.MongoDb`: сервіс працює на `MongoDB.Driver` 3.x, а сумісність пакета з нею залежить від версії.
+  SQL Server і Redis — пакети `AspNetCore.HealthChecks.SqlServer` / `.Redis`.
+* **gRPC Health Checking Protocol:** кожен сервіс має `AddGrpcHealthChecks(...)` + `MapGrpcHealthChecksService()`; загальний статус сервісу (`""`) — це перевірки з тегом `ready`.
+  Aggregator перевіряє залежності через `Health.HealthClient`; `RpcException` → збій із логом.
+
+### Liveness, readiness, startup
+
+| Endpoint | Що перевіряє | Збій | Реакція оркестратора |
+|----------|--------------|------|----------------------|
+| `/health/live` | лише процес (`self`), **без зовнішніх залежностей**, мілісекунди | — | перезапуск процесу |
+| `/health/ready` | перевірки з тегом `ready`: бази, Redis, downstream; JSON з деталями кожної | Unhealthy → 503; Degraded → 200 | тимчасове виключення з балансування |
+| `/health/startup` | чи завершився старт (`ApplicationStarted`) | 503 | очікування старту |
+| `/health`, `/alive` | усі перевірки / liveness (шаблон Aspire) | — | лише Development |
+
+`/health/live`, `/health/ready`, `/health/startup` доступні **в усіх середовищах** (їх використовуватиме Kubernetes у Лаб. 10); JSON-деталі показуються лише в Development, у Production віддається
+лише загальний статус. У AppHost кожен ресурс має `WithHttpHealthCheck("/health")` — Dashboard показує Healthy / Degraded / Unhealthy, а `WaitFor` чекає на **здорову** залежність, а не лише запущену.
+
+## 51. Сценарії перевірки
+
+| Сценарій | Дія | Очікування |
+|----------|-----|------------|
+| Тимчасовий збій | зупинити `reviews-api` у Dashboard на 5–10 с, `curl …/api/aggregator/orders/1/full?refresh=true` | повтори в логах (`Polly`), метрика `OnRetry`, швидка часткова відповідь з `warnings` |
+| Circuit breaker | тримати `reviews-api` зупиненим, виконати ≥ 10 запитів `refresh=true` | лог `Circuit breaker for reviews-api OPENED`, метрика `OnCircuitOpened`, відповідь без очікування таймауту (`circuit_open` у `aggregator.dependency.failures`); через `BreakDuration` — `HALF-OPEN` і `CLOSED` після відновлення |
+| Таймаут | додати `await Task.Delay(…)` у тестовий ендпоінт сервісу | `OnTimeout`, попередження `… timed out` |
+| Redis | зупинити `redis` у Dashboard | `/health/ready` Каталогу й Aggregator = **Degraded** (200), сервіс відповідає (з бази) |
+| SQL Server | зупинити `sql` | `/health/live` = 200, `/health/ready` = 503 |
+| Бізнес-метрики | створити кілька замовлень (`POST /api/orders`) | `orders.created` з фільтром `order.status`, розподіл `orders.operation.duration` |
+
+```bash
+curl -s http://localhost:5000/api/aggregator/orders/1/full?refresh=true     # часткова відповідь при зупиненому reviews-api
+# адреси сервісів — з Dashboard (Resources); health endpoints не проксуються через Gateway
+curl -i <адреса-catalog-api>/health/live
+curl -s <адреса-catalog-api>/health/ready                                     # JSON з деталями кожної перевірки
+```
+
+### Ефективність resilience (для здачі, ч. 4.5)
+
+Виконайте по 20 запитів `…/full?refresh=true` при зупиненому `reviews-api`: один раз із політикою за замовчуванням (прибрати `AddServiceResilience` у `Program.cs`), один — із профілями.
+
+| Показник | Без профілів (типова політика) | З профілями | Звідки |
+|----------|-------------------------------|-------------|--------|
+| Середній час відповіді при збої Відгуків, мс | _заповнити_ | _заповнити_ | Traces / `aggregator.operation.duration` |
+| Частка відповідей `error` (500/503) | _заповнити_ | _заповнити_ | `aggregator.requests`, `result=error` |
+| Частка `partial` (замість помилки) | _заповнити_ | _заповнити_ | `aggregator.requests`, `result=partial` |
+| Кількість `OnRetry` / `OnCircuitOpened` | _заповнити_ | _заповнити_ | `resilience.polly.strategy.events` |
+
+## 52. Моніторинг у Dashboard (ч. 4)
+
+| Що дивитися | Де | Нормальний діапазон (навчальний стенд) | Тривога |
+|-------------|----|----------------------------------------|---------|
+| Статус ресурсів | Resources | усі Healthy (reviews/cache можуть бути Degraded) | Unhealthy базових залежностей |
+| Частка помилок | `aggregator.requests` за `result` | `partial` + `error` < 5 % | зростання `partial` — збій залежності |
+| Збої залежностей | `aggregator.dependency.failures` за `dependency`, `reason` | 0 | `circuit_open`, `timeout` |
+| Затримка агрегації | `aggregator.operation.duration` (p95) | < 300 мс при `cache.hit=false` | > 1 с |
+| Повтори й breaker | `resilience.polly.strategy.events`, `event.name` | поодинокі `OnRetry` | постійні `OnRetry`, будь-який `OnCircuitOpened` |
+| Hit ratio кешу | `cache.hits` / (`cache.hits` + `cache.misses`) за `cache.level` | L1 > 70 % на повторних запитах | різке падіння; `cache.errors` > 0 |
+| Бізнес-потік | `orders.created`, `orders.paid` | залежить від навантаження | різке падіння при незмінному трафіку |
+| Затримка операцій | `*.operation.duration`, `status=failure` | p95 < 200 мс | зростання частки `failure` |
+
+Типові фільтри: Structured logs — `CorrelationId = <id>`; категорія `Polly` або `Platform.Aggregator.Resilience` (переходи breaker); рівень `Warning`+; Traces — `correlation.id`,
+повторні спроби видно як кілька spans одного виклику. Aspire Dashboard — інструмент розробки; у production використовують Grafana / Prometheus / Azure Monitor.
+
+## 53. Відповідність критеріям Лаб. 07
+
+| Критерій | Де |
+|----------|----|
+| Один Standard Resilience Handler без нашарування, `RemoveAllResilienceHandlers` для власних | `ServiceDefaults/Extensions.cs`, `Aggregator/Resilience/ResilienceExtensions.cs` |
+| Retry gRPC за статусами (`ServiceConfig`, `RetryPolicy`) | `ResilienceExtensions.AddGrpcRetryPolicy` |
+| Retry (jitter, експоненційна затримка, без небезпечних методів), circuit breaker (`FailureRatio`, `MinimumThroughput`, `BreakDuration`, `OnOpened`), таймаути | `ResilienceExtensions.AddServiceResilience` |
+| Різні політики критичних/некритичних із обґрунтуванням | `ServiceResilienceProfile.cs`, розділ 48 |
+| Graceful degradation Redis | `Platform.Caching/TwoLevelCache.cs` |
+| Клас бізнес-метрик, Counter з тегами, префікси, Meter-и й Polly у ServiceDefaults | `*/Metrics/*Metrics.cs`, `Extensions.cs` |
+| Histogram (успіх і збій), ObservableGauge, низька кардинальність | розділ 49 |
+| Health checks SQL Server й MongoDB (імена, теги, таймаут) | `OrdersHealthChecks`, `CatalogHealthChecks`, `DependencyInjection` Reviews |
+| Redis зі статусом Degraded | `CatalogHealthChecks`, `Aggregator/Program.cs` |
+| gRPC Health Checking Protocol + перевірка залежностей Aggregator | `GrpcDependencyHealthCheck`, `MapGrpcHealthChecksService` |
+| Liveness / readiness (JSON-деталі, не лише Development) | `Extensions.MapDefaultEndpoints`, `HealthResponseWriter` |
+| `WithHttpHealthCheck` в AppHost | `Platform.AppHost/AppHost.cs` |
+
+## 54. Контрольні питання (коротко)
+
+* **Стратегії handler-а:** rate limiter → загальний таймаут → retry → circuit breaker → таймаут спроби (зовні всередину).
+* **Jitter і thundering herd.** Без jitter усі клієнти після збою повторюють запити в один момент і знову перевантажують сервіс; випадковий розкид затримок розтягує повтори в часі.
+* **Стани circuit breaker.** Closed (виклики проходять) → Open (одразу відхиляються, fail-fast), коли частка збоїв ≥ `FailureRatio` при ≥ `MinimumThroughput` за `SamplingDuration` →
+  Half-Open після `BreakDuration` (пробний запит) → Closed при успіху або знову Open.
+* **gRPC і HTTP-обробник.** Статус `Unavailable` — у трейлерах відповіді з HTTP 200, тому HTTP-обробник його не бачить; потрібен `RetryPolicy` у `ServiceConfig` каналу.
+* **Чому не додавати `AddStandardResilienceHandler()` вдруге.** Обробники нашаровуються: повтори множаться (3 × 3 = 9 запитів замість 3) і таймаути накладаються; спершу `RemoveAllResilienceHandlers()`.
+* **Counter / Histogram / Gauge.** Counter накопичує події, Histogram — розподіл (затримки), Gauge — поточний стан.
+* **Кардинальність.** Кожна унікальна комбінація тегів — окремий часовий ряд; Id користувачів створюють мільйони рядів і перевантажують сховище метрик.
+* **Liveness vs readiness.** Liveness: чи живий процес (збій → перезапуск); readiness: чи готовий приймати трафік (збій → виключення з балансування без перезапуску).
+* **Чому Redis → Degraded.** Кеш необов'язковий: без нього сервіс працює (повільніше), тож робити його Unhealthy означало б безпідставно виключити здоровий екземпляр.
