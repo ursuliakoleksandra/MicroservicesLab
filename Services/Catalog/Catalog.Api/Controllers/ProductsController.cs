@@ -1,3 +1,5 @@
+using Platform.Security;
+using Platform.Security.Authorization;
 using Catalog.Bll.Dtos;
 using Catalog.Bll.Services;
 using FluentValidation;
@@ -16,6 +18,7 @@ public class ProductsController(IProductService service) : ControllerBase
     /// (sortBy = name|price|sku|created|stock, sortDir = asc|desc) виконуються в SQL.
     /// Метадані пагінації — у тілі відповіді та в заголовках X-Total-Count / X-Total-Pages / X-Page / X-Page-Size.
     /// </summary>
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet]
     [ProducesResponseType<PagedResult<ProductListItemDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -35,6 +38,7 @@ public class ProductsController(IProductService service) : ControllerBase
     }
 
     /// <summary>Товари, залишок яких не перевищує поріг (інша специфікація, той самий репозиторій).</summary>
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet("low-stock")]
     [ProducesResponseType<IReadOnlyList<ProductListItemDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -43,12 +47,14 @@ public class ProductsController(IProductService service) : ControllerBase
         => Ok(await service.GetLowStockAsync(threshold, ct));
 
     /// <summary>Картка товару (Eager Loading: бренд, деталі, зображення, категорії — один SQL-запит).</summary>
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet("{id:long}")]
     [ProducesResponseType<ProductDetailsDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ProductDetailsDto>> GetById(long id, CancellationToken ct)
         => Ok(await service.GetByIdAsync(id, ct));                                  // не знайдено -> 404
 
+    [RequirePermission(Permissions.Products.Create)]
     [HttpPost]
     [ProducesResponseType<ProductDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -62,6 +68,7 @@ public class ProductsController(IProductService service) : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);   // 201 + Location
     }
 
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPut("{id:long}")]
     [ProducesResponseType<ProductDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -74,6 +81,7 @@ public class ProductsController(IProductService service) : ControllerBase
     }
 
     /// <summary>Зміна ціни (ціна &gt; 0 — інваріант сутності).</summary>
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPut("{id:long}/price")]
     [ProducesResponseType<ProductDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -85,7 +93,16 @@ public class ProductsController(IProductService service) : ControllerBase
         return Ok(await service.ChangePriceAsync(id, input, ct));
     }
 
+    /// <summary>Публікація товару (IsActive = true). Потрібен дозвіл products:publish (admin, manager).</summary>
+    [RequirePermission(Permissions.Products.Publish)]
+    [HttpPost("{id:long}/publish")]
+    [ProducesResponseType<ProductDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProductDto>> Publish(long id, CancellationToken ct)
+        => Ok(await service.PublishAsync(id, ct));
+
     /// <summary>Поповнення залишку.</summary>
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPost("{id:long}/stock/add")]
     [ProducesResponseType<ProductDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -94,6 +111,7 @@ public class ProductsController(IProductService service) : ControllerBase
         => Ok(await service.AddStockAsync(id, input, ct));
 
     /// <summary>Списання залишку; якщо товару менше, ніж запитано — 409 (правило сутності).</summary>
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPost("{id:long}/stock/remove")]
     [ProducesResponseType<ProductDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -103,6 +121,7 @@ public class ProductsController(IProductService service) : ControllerBase
         => Ok(await service.RemoveStockAsync(id, input, ct));
 
     /// <summary>Деталі товару (1:1).</summary>
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPut("{id:long}/detail")]
     [ProducesResponseType<ProductDetailsDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -115,6 +134,7 @@ public class ProductsController(IProductService service) : ControllerBase
     }
 
     /// <summary>Додати зображення (1:N).</summary>
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPost("{id:long}/images")]
     [ProducesResponseType<ProductDetailsDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -128,6 +148,7 @@ public class ProductsController(IProductService service) : ControllerBase
     }
 
     /// <summary>Додати товар до категорії (M:N; AddedAt проставляється автоматично).</summary>
+    [RequirePermission(Permissions.Products.Update)]
     [HttpPost("{id:long}/categories/{categoryId:long}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -138,6 +159,7 @@ public class ProductsController(IProductService service) : ControllerBase
         return NoContent();
     }
 
+    [RequirePermission(Permissions.Products.Update)]
     [HttpDelete("{id:long}/categories/{categoryId:long}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -147,6 +169,7 @@ public class ProductsController(IProductService service) : ControllerBase
         return NoContent();
     }
 
+    [RequirePermission(Permissions.Products.Delete)]
     [HttpDelete("{id:long}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]

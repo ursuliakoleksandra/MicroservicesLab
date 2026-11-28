@@ -1,0 +1,7 @@
+# Підключення провайдера до Keycloak із AppHost (порт 8080). Пароль адміністратора — секрет:
+#   pulumi config set --secret keycloak:password "<keycloak-admin-password>"
+config:
+  keycloak:url: http://localhost:8080
+  keycloak:clientId: admin-cli
+  keycloak:username: admin
+  keycloak:realm: master

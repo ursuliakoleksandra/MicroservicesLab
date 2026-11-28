@@ -10,6 +10,8 @@ public interface IProductService
     Task<ProductDto> CreateAsync(CreateProductDto input, CancellationToken ct);
     Task<ProductDto> UpdateAsync(long id, UpdateProductDto input, CancellationToken ct);
     Task<ProductDto> ChangePriceAsync(long id, ChangePriceDto input, CancellationToken ct);
+    /// <summary>Публікація товару: IsActive = true (доступний для замовлень). Ідемпотентна.</summary>
+    Task<ProductDto> PublishAsync(long id, CancellationToken ct);
     Task<ProductDto> AddStockAsync(long id, StockChangeDto input, CancellationToken ct);
     Task<ProductDto> RemoveStockAsync(long id, StockChangeDto input, CancellationToken ct);
     Task<ProductDetailsDto> SaveDetailAsync(long id, SaveProductDetailDto input, CancellationToken ct);

@@ -10,6 +10,7 @@
 | № 06 | gRPC-контракти (Protocol Buffers), кеш L1 (пам'ять) + L2 (Redis), Aggregator на gRPC | [Частина 6](#частина-6--grpc-та-кешування-лаб-06) |
 | № 07 | Resilience (retry, circuit breaker, таймаути), бізнес-метрики, health checks | [Частина 7](#частина-7--resilience-метрики-та-health-checks-лаб-07) |
 | № 08 | Асинхронна взаємодія: RabbitMQ, інтеграційні події, ідемпотентні споживачі, retry/DLQ, трасування через брокер | [Частина 8](#частина-8--асинхронна-взаємодія-rabbitmq-лаб-08) |
+| № 09 | Безпека: ASP.NET Identity + JWT, Duende IdentityServer (OAuth 2.0), Keycloak + Pulumi, permission-based авторизація | [Частина 9](#частина-9--автентифікація-й-авторизація-лаб-09) |
 
 # Частина 1 — три бази даних (Лаб. 01)
 
@@ -49,6 +50,13 @@ Platform.slnx              одне рішення на всю платформ�
 Platform.AppHost/          оркестрація .NET Aspire (AppHost.cs)
 Platform.Messaging/        (Лаб. 08) події, publisher, топологія RabbitMQ, consumer (BackgroundService), трасування
 Platform.Messaging.Tests/  (Лаб. 08) unit-тести подій і топології
+Platform.Security/         (Лаб. 09) JWT-автентифікація трьох емітентів, [RequirePermission], scope-політики, Client Credentials
+Platform.Security.Tests/   (Лаб. 09) unit-тести PermissionEvaluator
+Services/Auth/             (Лаб. 09, ч. 1) Auth Service: ASP.NET Identity + JWT + refresh-токени
+Services/IdentityServer/   (Лаб. 09, ч. 2) Duende IdentityServer + ASP.NET Identity + EF-сховища
+Services/Payments/         (Лаб. 09) заглушка платіжного сервісу (payments-api)
+Pulumi/                    (Лаб. 09, ч. 3) Keycloak як код: realm, resource servers, ролі, клієнти, користувачі
+postman/, scripts/         (Лаб. 09) колекція Postman, check-matrix.ps1, add-migrations.ps1
 Services/Orders/           мікросервіс «Замовлення» (Проєкт №1)
     Orders.Api/            контролери, Program.cs, appsettings.json, обробка помилок
     Orders.Bll/            сервіси, DTO, профілі AutoMapper
@@ -1530,3 +1538,131 @@ catalog-events (topic) ─┤                                                   
 * **Чому запис про обробку в тій самій транзакції.** Інакше можливі «подія позначена, а зміни нема» (втрата) або «зміна є, позначки нема» (подвійне застосування).
 * **Outbox.** Подія записується в таблицю тією ж транзакцією, що й зміна даних, а окремий процес її відправляє — усуває вікно між `SaveChanges` і публікацією.
 * **Out-of-order.** Версія кожного поля (час події): застаріла подія не перезаписує новіше значення.
+
+
+# Частина 9 — автентифікація й авторизація (Лаб. 09)
+
+Платформа реалізує **три підходи** до безпеки; Gateway і мікросервіси приймають токени кожного з них (схема `Smart` у `Platform.Security` читає claim `iss`
+і делегує перевірку відповідній схемі JwtBearer):
+
+| Підхід | Емітент | Перевірка токена | Де рішення про доступ |
+|--------|---------|------------------|------------------------|
+| Ч. 1 ASP.NET Identity + JWT | `technest-auth` (Auth Service) | симетричний ключ HS256 (`Jwt:SecretKey`) | ролі `Admin` (усе), `User` (читання й створення) |
+| Ч. 2 Duende IdentityServer | `http://localhost:5400` | ключі RS256 з discovery (`Authority`) | claim `scope` (`orders.read` ≙ `orders:read`) |
+| Ч. 3 Keycloak + Pulumi | `…/realms/TechNestRealm` | ключі з OIDC discovery | claim `authorization.permissions` |
+
+## 63. Запуск
+
+```powershell
+dotnet user-secrets --project Platform.AppHost set "Parameters:sql-password" "<пароль SQL Server>"
+dotnet user-secrets --project Platform.AppHost set "Parameters:jwt-secret" "<довільний рядок ≥ 32 символи>"
+dotnet user-secrets --project Platform.AppHost set "Parameters:aggregator-client-secret" "aggregator-dev-secret"
+dotnet user-secrets --project Platform.AppHost set "Parameters:keycloak-admin-password" "<пароль адміністратора Keycloak>"
+
+./scripts/add-migrations.ps1          # один раз: міграції Auth Service (IdentityDb) і трьох контекстів IdentityServer
+dotnet run --project Platform.AppHost # SQL Server ×2, MongoDB, Redis, RabbitMQ, Keycloak, усі сервіси
+
+# Keycloak як код (після того, як ресурс keycloak став Healthy):
+cd Pulumi/TechNest.Keycloak.Pulumi
+pulumi login --local ; pulumi stack init dev
+pulumi config set --secret keycloak:password "<пароль адміністратора Keycloak>"
+pulumi preview ; pulumi up ; pulumi stack output --show-secrets
+./scripts/check-matrix.ps1 -KeycloakClientSecret '<PostmanClientSecret з outputs>'
+```
+
+Без згенерованих міграцій сервіси створюють таблиці з моделі (`DatabaseInitializer`); для здачі потрібні міграції (`Migrations/` у репозиторії).
+
+## 64. Частина 1: Auth Service (ASP.NET Identity + JWT)
+
+* **База:** AppHost додає `IdentityDb` на SQL Server (`sql.AddDatabase("IdentityDb")`) і передає її `auth-api` через `WithReference`. `ApplicationUser : IdentityUser`,
+  `ApplicationDbContext : IdentityDbContext<ApplicationUser>` (+ таблиця `RefreshTokens`); `AddIdentity` з вимогами до пароля (8 символів, цифра, велика/мала літера, спецсимвол),
+  lockout (5 спроб → 15 хв), унікальний email. Міграції — `scripts/add-migrations.ps1`.
+* **Токени:** access 15 хв (claims `sub`, `unique_name`, `email`, `role`), refresh 7 діб. Refresh-токен — випадковий; у БД лежить лише його **хеш** (дати створення/закінчення,
+  відкликання, причина, `ReplacedByTokenHash`). **Rotation:** `refresh-token` відкликає старий і видає новий; повторне використання відкликаного токена = ознака крадіжки → відкликаються всі сесії користувача.
+  Refresh передається в **HttpOnly cookie** (недоступний для JS), access — у тілі відповіді.
+* **Endpoints** (через Gateway): `POST /auth/register` (роль `User`), `verify-email`, `resend-verification`, `login`, `refresh-token`, `revoke-token`, `logout`, `forgot-password`, `reset-password`, `change-password`.
+  Login без підтвердженого email → 403. Токени підтвердження/скидання — одноразові (`DataProtectorTokenProvider`, термін 2 год; після використання змінюється security stamp).
+  `reset-password` і `change-password` відкликають усі refresh-токени. Лист імітується записом у лог (`IAuthEmailSender`); у Development токен повертається ще й у відповіді.
+* **Ролі й користувачі:** `User` і `Admin` створюються при старті (`IdentitySeeder`); `GET/PUT/DELETE /users…` і керування ролями — `[Authorize(Roles = "Admin")]`; «власні» ендпоінти порівнюють `userId` з токена.
+* **Gateway:** YARP-маршрути `/auth/**` (POST — anonymous, решта — authenticated) і `/users/**` → `auth-api`; на всі інші маршрути політика `authenticated`. Gateway перевіряє JWT (перший рубіж) і додає `X-User-Id`
+  з `sub`; заголовок `Authorization` форвардиться, тому **кожен мікросервіс перевіряє токен самостійно** (`AddPlatformAuthentication` + `[RequirePermission]`) і використовує claims у бізнес-логіці.
+
+## 65. Частина 2: Duende IdentityServer
+
+* **Проєкт** `TechNest.IdentityServer` на власній БД `IdentityServerDb` (окремий SQL Server): `AddIdentityServer().AddAspNetIdentity<ApplicationUser>().AddConfigurationStore().AddOperationalStore()`;
+  три EF-контексти (`ApplicationDbContext`, `ConfigurationDbContext`, `PersistedGrantDbContext`) із міграціями. UI входу в стилі Quickstart: `AccountController` (Login/Logout), `Home`, сторінка Login.
+* **ApiResources** (`orders_api`, `products_api`, `reviews_api`, `payments_api`) групують **ApiScopes** `{ресурс}.{дія}`; `aud` токена = ApiResource.
+* **Клієнти:** `postman` — Authorization Code + PKCE (секрет); `swagger` — публічний клієнт PKCE **без секрету**; `aggregator_service` — Client Credentials (токен без `sub`, scopes `orders.read products.read reviews.read`).
+* **Мікросервіси:** `AddJwtBearer` з `Authority` IdentityServer і `Audience` = ApiResource; **scope-політики** (`orders.read` тощо) на gRPC-сервісах, які викликає Aggregator
+  (`[Authorize(Policy = ApiScopes.OrdersRead)]`); REST-ендпоінти приймають scope як permission. Aggregator отримує токен через `ClientCredentialsTokenProvider` (кеш до закінчення терміну) і додає його
+  `ClientCredentialsTokenHandler`-ом до кожного HTTP/gRPC-виклику.
+
+## 66. Частина 3: Keycloak + Pulumi
+
+* **Траєкторія А:** `builder.AddKeycloak("keycloak", port: 8080, adminPassword: …).WithDataVolume()`; сервіси отримують `Keycloak__Authority = …/realms/TechNestRealm` і налаштовують схему JwtBearer на realm.
+* **Pulumi (C#)** — `Pulumi/TechNest.Keycloak.Pulumi`: realm `TechNestRealm`; **resource servers** `orders-api`, `products-api`, `payments-api` (Authorization Services увімкнено) з повними наборами scopes (таблиця 6);
+  реалм-ролі `admin/manager/user/guest` (**composite** з клієнтських ролей), role policies і scope permissions; клієнти через фабрики `ClientExtensions` (Authorization Code: `postman`, `swagger`; Client Credentials: `aggregator-service`),
+  extension-методи `WithDefaultScopes`, `WithAudienceMappers`, `WithPermissionsMapper` (protocol mapper → claim `authorization.permissions`); тестові користувачі `alice/bob/carol/dave`; outputs: `RealmUrl`, `AdminConsoleUrl`, `TokenEndpoint`, `ClientIds`, `ClientSecrets`.
+
+| Роль | orders-api | products-api | payments-api |
+|------|-----------|--------------|--------------|
+| admin | усі | усі | усі |
+| manager | read, update, approve | read, update, publish | — |
+| user | read, create | read | — |
+| guest | — | read | — |
+
+`payments-api` не видає permissions нікому, крім `admin` — свідоме рішення (найчутливіший ресурс).
+
+## 67. Permission-based авторизація
+
+`[RequirePermission(Permissions.Orders.Update)]` стоїть на **кожному** ендпоінті Orders, Products (Catalog) і Payments; рішення приймає сервіс **локально** (`PermissionRequirement` + `PermissionAuthorizationHandler`,
+claim `authorization.permissions` — без звернення до Keycloak). Політики `perm:{permission}` створюються на льоту (`PermissionPolicyProvider`). Тому manager → `PUT` 200, `DELETE` **403** (а не 500).
+
+| Endpoint | Permission | admin | manager | user | guest |
+|----------|-----------|:---:|:---:|:---:|:---:|
+| `GET /api/orders/{id}`, `GET /api/orders`, `…/history` | `orders:read` | ✓ | ✓ | ✓ | ✗ |
+| `POST /api/orders` | `orders:create` | ✓ | ✗ | ✓ | ✗ |
+| `PUT /api/orders/{id}/details`, `POST …/pay`, `…/ship`, `…/cancel` | `orders:update` | ✓ | ✓ | ✗ | ✗ |
+| `DELETE /api/orders/{id}` | `orders:delete` | ✓ | ✗ | ✗ | ✗ |
+| `POST /api/orders/{id}/confirm` (підтвердження = approve) | `orders:approve` | ✓ | ✓ | ✗ | ✗ |
+| `GET /api/products…`, `/api/brands`, `/api/categories…` | `products:read` | ✓ | ✓ | ✓ | ✓ |
+| `POST /api/products`, `/api/brands`, `/api/categories` | `products:create` | ✓ | ✗ | ✗ | ✗ |
+| `PUT /api/products/{id}` (+ `/price`, `/detail`), `POST …/stock/*`, `…/images`, `…/categories/*` | `products:update` | ✓ | ✓ | ✗ | ✗ |
+| `DELETE /api/products/{id}` | `products:delete` | ✓ | ✗ | ✗ | ✗ |
+| `POST /api/products/{id}/publish` | `products:publish` | ✓ | ✓ | ✗ | ✗ |
+| `GET /api/payments` / `POST …/process` / `POST …/refund` | `payments:read` / `:process` / `:refund` | ✓ | ✗ | ✗ | ✗ |
+
+Клієнти, `GET/POST/PUT/DELETE /api/customers` — ті самі `orders:*`. Відгуки (`/api/reviews`, `/api/discussions`) — `[Authorize]`. gRPC-сервіси — scope-політики Client Credentials.
+Додано `POST /api/products/{id}/publish` (`IsActive = true`, подія `ProductActivityChangedEvent`), щоб permission `products:publish` мав реальний endpoint.
+
+**Перевірка:** `postman/TechNest-Lab09.postman_collection.json` (register/login/refresh, Authorization Code, Client Credentials, матриця для кожної ролі) і `scripts/check-matrix.ps1`
+(порівнює фактичні коди з очікуваними й зберігає `matrix-result.csv` — таблиця для звіту).
+
+## 68. Відповідність критеріям Лаб. 09
+
+| Критерій | Де |
+|----------|----|
+| Auth Service, IdentityDb через Aspire, `ApplicationUser`, `IdentityDbContext`, `AddIdentity` | `Services/Auth`, `Platform.AppHost/AppHost.cs` |
+| JWT access 15 хв + refresh 7 діб, rotation, refresh у БД, HttpOnly cookie | `JwtTokenService`, `RefreshTokenService`, `AuthController` |
+| register / login / refresh-token / revoke-token / logout | `AuthController` |
+| verify-email, resend-verification, forgot/reset/change-password | `AuthController` |
+| Ролі User/Admin, `/users` для Admin, owner-перевірки | `IdentitySeeder`, `UsersController` |
+| Gateway: `/auth`, `/users`, JWT на Gateway, `[Authorize]` у сервісах | `Platform.ApiGateway`, `Platform.Security` |
+| IdentityServer: окрема БД, ASP.NET Identity, EF-сховища, UI, міграції | `Services/IdentityServer` |
+| ApiResources, ApiScopes, три клієнти | `IdentityServerConfig.cs` |
+| Сервіси приймають токени IdentityServer, scope-політики, Aggregator — Client Credentials | `Platform.Security`, gRPC-сервіси, `Platform.Aggregator/Program.cs` |
+| Keycloak через Aspire | `AppHost.cs` (`AddKeycloak`) |
+| Pulumi: realm, resource servers, ролі за матрицею, payments — лише admin | `Matrix.cs`, `TechNestStack.cs` |
+| Pulumi: клієнти (фабрики), користувачі, mapper permissions, outputs | `ClientExtensions.cs`, `TechNestStack.cs` |
+| `[RequirePermission]` на кожному endpoint Orders/Products/Payments | контролери, `Platform.Security/Authorization` |
+
+## 69. Контрольні питання (коротко)
+
+* **Authentication vs Authorization.** Автентифікація — «хто ти» (перевірка токена), авторизація — «що тобі дозволено» (permissions/ролі/scopes).
+* **Чому refresh-токен у HttpOnly cookie, а в БД — хеш.** Cookie недоступна JavaScript (захист від XSS); хеш у БД — витік бази не дає придатних токенів.
+* **Rotation і reuse detection.** Кожне використання refresh-токена видає новий і відкликає старий; повторне використання старого — сигнал крадіжки, відкликаються всі сесії.
+* **Authorization Code + PKCE vs Client Credentials.** Перший — користувач у браузері (code_verifier захищає від перехоплення коду); другий — сервіс сам (токен без `sub`).
+* **Scope vs role vs permission.** Scope — що клієнт може просити в API; роль — група користувачів; permission — конкретна дія («orders:delete»), яку перевіряє endpoint.
+* **Чому permissions перевіряються локально.** Немає виклику Keycloak на кожен запит (швидко, стійко); токен містить усі дозволи.
+* **Чому payments — лише admin.** Найчутливіший ресурс: принцип найменших привілеїв.
+* **IaC (Pulumi).** Налаштування Keycloak описано кодом: перегляд (`preview`), версіонування, відтворюваність, `destroy` для очищення.

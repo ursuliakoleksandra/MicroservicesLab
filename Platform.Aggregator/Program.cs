@@ -10,12 +10,20 @@ using Platform.Aggregator.Metrics;
 using Platform.Aggregator.Resilience;
 using Platform.Aggregator.Services;
 using Platform.Caching;
+using Platform.Security.Authentication;
+using Platform.Security.Authorization;
+using Platform.Security.ClientCredentials;
 using Platform.ServiceDefaults;
 using Reviews.Contracts;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();      // Serilog, OpenTelemetry, health checks, service discovery, CorrelationIdHandler
+
+// Лаб. 09: вхідні токени (Local / IdentityServer / Keycloak) та вихідний токен Client Credentials до downstream-сервісів
+builder.AddPlatformAuthentication();
+builder.Services.AddPlatformAuthorization();
+builder.Services.AddClientCredentials(builder.Configuration);
 
 // ---------- транспорт до мікросервісів: Grpc (за замовчуванням) або Http (Лаб. 05) — для порівняння затримок ----------
 var transport = builder.Configuration["Aggregator:Transport"] ?? "Grpc";
@@ -26,11 +34,14 @@ if (string.Equals(transport, "Http", StringComparison.OrdinalIgnoreCase))
     // Resilience: стандартний обробник з ServiceDefaults замінюється профілем сервісу (RemoveAllResilienceHandlers усередині) —
     // критичні Замовлення й Каталог мають більше повторів і чутливіший breaker, некритичні Відгуки швидко «здаються».
     builder.Services.AddHttpClient<IOrdersClient, OrdersClient>(c => c.BaseAddress = new("https+http://orders-api"))
-        .AddServiceResilience(ServiceProfiles.Orders);
+        .AddServiceResilience(ServiceProfiles.Orders)
+        .AddHttpMessageHandler<ClientCredentialsTokenHandler>();   // Bearer-токен Client Credentials
     builder.Services.AddHttpClient<ICatalogClient, CatalogClient>(c => c.BaseAddress = new("https+http://catalog-api"))
-        .AddServiceResilience(ServiceProfiles.Catalog);
+        .AddServiceResilience(ServiceProfiles.Catalog)
+        .AddHttpMessageHandler<ClientCredentialsTokenHandler>();
     builder.Services.AddHttpClient<IReviewsClient, ReviewsClient>(c => c.BaseAddress = new("https+http://reviews-api"))
-        .AddServiceResilience(ServiceProfiles.Reviews);
+        .AddServiceResilience(ServiceProfiles.Reviews)
+        .AddHttpMessageHandler<ClientCredentialsTokenHandler>();
 }
 else
 {
@@ -42,13 +53,16 @@ else
     // в трейлерах відповіді з HTTP 200) і (2) HTTP-рівень (мережеві збої, таймаути, circuit breaker) за профілем сервісу.
     builder.Services.AddGrpcClient<OrdersService.OrdersServiceClient>(o => o.Address = new Uri("https://orders-api"))
         .AddGrpcRetryPolicy(ServiceProfiles.Orders)
-        .AddServiceResilience(ServiceProfiles.Orders, forGrpc: true);
+        .AddServiceResilience(ServiceProfiles.Orders, forGrpc: true)
+        .AddHttpMessageHandler<ClientCredentialsTokenHandler>();   // Bearer-токен Client Credentials
     builder.Services.AddGrpcClient<CatalogService.CatalogServiceClient>(o => o.Address = new Uri("https://catalog-api"))
         .AddGrpcRetryPolicy(ServiceProfiles.Catalog)
-        .AddServiceResilience(ServiceProfiles.Catalog, forGrpc: true);
+        .AddServiceResilience(ServiceProfiles.Catalog, forGrpc: true)
+        .AddHttpMessageHandler<ClientCredentialsTokenHandler>();
     builder.Services.AddGrpcClient<ReviewsService.ReviewsServiceClient>(o => o.Address = new Uri("https://reviews-api"))
         .AddGrpcRetryPolicy(ServiceProfiles.Reviews)
-        .AddServiceResilience(ServiceProfiles.Reviews, forGrpc: true);
+        .AddServiceResilience(ServiceProfiles.Reviews, forGrpc: true)
+        .AddHttpMessageHandler<ClientCredentialsTokenHandler>();
 
     builder.Services.AddTransient<IOrdersClient, GrpcOrdersClient>();
     builder.Services.AddTransient<ICatalogClient, GrpcCatalogClient>();
@@ -114,6 +128,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
     app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 }
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 app.MapDefaultEndpoints();         // /health і /alive

@@ -1,0 +1,3 @@
+name: technest-keycloak
+runtime: dotnet
+description: Keycloak realm TechNestRealm — Infrastructure as Code (Лаб. 09, Частина 3)

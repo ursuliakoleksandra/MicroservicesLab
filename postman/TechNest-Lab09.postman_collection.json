@@ -1,0 +1,3325 @@
+{
+  "info": {
+    "name": "TechNest Lab09 — Auth",
+    "_postman_id": "9e29990b-e98c-4d30-be3b-0cf1058ce848",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Identity+JWT, IdentityServer (Authorization Code+PKCE, Client Credentials), Keycloak. Запуск: AppHost + pulumi up; змінні — на вкладці Variables."
+  },
+  "item": [
+    {
+      "name": "1. Identity + JWT (Auth Service)",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/auth/register",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userName\": \"reader1\",\n  \"email\": \"reader1@technest.local\",\n  \"password\": \"Reader#12345\",\n  \"fullName\": \"Reader One\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('verifyToken', j.devVerificationToken);",
+                  "pm.collectionVariables.set('verifyEmail','reader1@technest.local');",
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/auth/verify-email",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "verify-email"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{verifyEmail}}\",\n  \"token\": \"{{verifyToken}}\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (user)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/auth/login",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userNameOrEmail\": \"reader1\",\n  \"password\": \"Reader#12345\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Access token у тілі, refresh token — у HttpOnly cookie refreshToken (Postman зберігає cookie автоматично)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('localToken', j.accessToken);",
+                  "pm.test('access token received', () => pm.expect(j.accessToken).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/auth/login",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userNameOrEmail\": \"{{adminUser}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('adminToken', j.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token (cookie)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/auth/refresh-token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "refresh-token"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Старий refresh-токен відкликається, видається новий (rotation). Повторний виклик зі старим токеном → 401 і відкликання всіх сесій."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('localToken', j.accessToken);",
+                  "pm.test('access token received', () => pm.expect(j.accessToken).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me: roles (user)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/users/{{userId}}/roles",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "roles"
+              ]
+            },
+            "description": "userId = claim sub із access token.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{localToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List users (Admin only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/users",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin → 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List users with user token (expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/users",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{localToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User → 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/auth/forgot-password",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"reader1@technest.local\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/auth/logout",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            }
+          }
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{localToken}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "2. IdentityServer (OAuth 2.0)",
+      "item": [
+        {
+          "name": "Authorization Code + PKCE → access token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/products",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "description": "Вкладка Authorization: OAuth 2.0 → Grant type \"Authorization Code (With PKCE)\"; Auth URL http://localhost:5400/connect/authorize; Access Token URL http://localhost:5400/connect/token; Client ID postman; Client Secret = Clients:PostmanSecret; Scope \"openid profile roles products.read orders.read offline_access\"; Callback https://oauth.pstmn.io/v1/callback. Після Get New Access Token — Use Token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 з токеном IdentityServer', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client Credentials → access token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:5400/connect/token",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "5400",
+              "path": [
+                "connect",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "client_id=aggregator_service, grant_type=client_credentials, scope=\"orders.read products.read reviews.read\" (urlencoded)",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "aggregator_service"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{aggregatorSecret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "orders.read products.read reviews.read"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('m2mToken', j.access_token);",
+                  "pm.test('токен без sub (машина-машина)', () => { const p = JSON.parse(atob(j.access_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); pm.expect(p.sub).to.be.undefined; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Call API with Client Credentials token (GET products)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/products",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('M2M scope products.read → 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Call API with Client Credentials token (POST products, expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/api/products",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('немає scope catalog.create → 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{m2mToken}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "3. Keycloak (ролі та дозволи)",
+      "item": [
+        {
+          "name": "Keycloak token: alice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/realms/TechNestRealm/protocol/openid-connect/token",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "realms",
+                "TechNestRealm",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "postman"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{keycloakPostmanSecret}}"
+                },
+                {
+                  "key": "username",
+                  "value": "alice"
+                },
+                {
+                  "key": "password",
+                  "value": "{{keycloakUserPassword}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('kc_alice', j.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Keycloak token: bob",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/realms/TechNestRealm/protocol/openid-connect/token",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "realms",
+                "TechNestRealm",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "postman"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{keycloakPostmanSecret}}"
+                },
+                {
+                  "key": "username",
+                  "value": "bob"
+                },
+                {
+                  "key": "password",
+                  "value": "{{keycloakUserPassword}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('kc_bob', j.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Keycloak token: carol",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/realms/TechNestRealm/protocol/openid-connect/token",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "realms",
+                "TechNestRealm",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "postman"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{keycloakPostmanSecret}}"
+                },
+                {
+                  "key": "username",
+                  "value": "carol"
+                },
+                {
+                  "key": "password",
+                  "value": "{{keycloakUserPassword}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('kc_carol', j.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Keycloak token: dave",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/realms/TechNestRealm/protocol/openid-connect/token",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "realms",
+                "TechNestRealm",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "postman"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{keycloakPostmanSecret}}"
+                },
+                {
+                  "key": "username",
+                  "value": "dave"
+                },
+                {
+                  "key": "password",
+                  "value": "{{keycloakUserPassword}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('kc_dave', j.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Матриця: admin (alice)",
+          "item": [
+            {
+              "name": "admin: GET /api/orders/0 (orders:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: POST /api/orders (orders:create) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: PUT /api/orders/0/details (orders:update) — allowed",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/details",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "details"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: DELETE /api/orders/0 (orders:delete) — allowed",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: POST /api/orders/0/confirm (orders:approve) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/confirm",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "confirm"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: GET /api/products (products:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: POST /api/products (products:create) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: PUT /api/products/0 (products:update) — allowed",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: DELETE /api/products/0 (products:delete) — allowed",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: POST /api/products/0/publish (products:publish) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0/publish",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0",
+                    "publish"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: GET /api/payments (payments:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/payments",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: POST /api/payments/process (payments:process) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/process",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "process"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "admin: POST /api/payments/refund (payments:refund) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/refund",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "refund"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_alice}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Матриця: manager (bob)",
+          "item": [
+            {
+              "name": "manager: GET /api/orders/0 (orders:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: POST /api/orders (orders:create) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: PUT /api/orders/0/details (orders:update) — allowed",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/details",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "details"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: DELETE /api/orders/0 (orders:delete) — forbidden 403",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: POST /api/orders/0/confirm (orders:approve) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/confirm",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "confirm"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: GET /api/products (products:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: POST /api/products (products:create) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: PUT /api/products/0 (products:update) — allowed",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: DELETE /api/products/0 (products:delete) — forbidden 403",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: POST /api/products/0/publish (products:publish) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0/publish",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0",
+                    "publish"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: GET /api/payments (payments:read) — forbidden 403",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/payments",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: POST /api/payments/process (payments:process) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/process",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "process"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "manager: POST /api/payments/refund (payments:refund) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/refund",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "refund"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_bob}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Матриця: user (carol)",
+          "item": [
+            {
+              "name": "user: GET /api/orders/0 (orders:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: POST /api/orders (orders:create) — allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: PUT /api/orders/0/details (orders:update) — forbidden 403",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/details",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "details"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: DELETE /api/orders/0 (orders:delete) — forbidden 403",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: POST /api/orders/0/confirm (orders:approve) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/confirm",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "confirm"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: GET /api/products (products:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: POST /api/products (products:create) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: PUT /api/products/0 (products:update) — forbidden 403",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: DELETE /api/products/0 (products:delete) — forbidden 403",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: POST /api/products/0/publish (products:publish) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0/publish",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0",
+                    "publish"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: GET /api/payments (payments:read) — forbidden 403",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/payments",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: POST /api/payments/process (payments:process) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/process",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "process"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "user: POST /api/payments/refund (payments:refund) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/refund",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "refund"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_carol}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Матриця: guest (dave)",
+          "item": [
+            {
+              "name": "guest: GET /api/orders/0 (orders:read) — forbidden 403",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: POST /api/orders (orders:create) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: PUT /api/orders/0/details (orders:update) — forbidden 403",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/details",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "details"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: DELETE /api/orders/0 (orders:delete) — forbidden 403",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: POST /api/orders/0/confirm (orders:approve) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/orders/0/confirm",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "0",
+                    "confirm"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: GET /api/products (products:read) — allowed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed: не 401/403', () => pm.expect(pm.response.code).to.not.be.oneOf([401,403]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: POST /api/products (products:create) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: PUT /api/products/0 (products:update) — forbidden 403",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: DELETE /api/products/0 (products:delete) — forbidden 403",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: POST /api/products/0/publish (products:publish) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/products/0/publish",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "0",
+                    "publish"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: GET /api/payments (payments:read) — forbidden 403",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway}}/api/payments",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: POST /api/payments/process (payments:process) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/process",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "process"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "guest: POST /api/payments/refund (payments:refund) — forbidden 403",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gateway}}/api/payments/refund",
+                  "host": [
+                    "{{gateway}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "refund"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{kc_dave}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('forbidden: 403 (не 500)', () => pm.response.to.have.status(403));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Матриця: без токена",
+      "item": [
+        {
+          "name": "GET /api/products без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/products",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/orders/0 без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/orders/0",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "0"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/payments без токена → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/payments",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "gateway",
+      "value": "http://localhost:5000"
+    },
+    {
+      "key": "adminUser",
+      "value": "admin"
+    },
+    {
+      "key": "adminPassword",
+      "value": "Admin#12345"
+    },
+    {
+      "key": "aggregatorSecret",
+      "value": "aggregator-dev-secret"
+    },
+    {
+      "key": "keycloakPostmanSecret",
+      "value": ""
+    },
+    {
+      "key": "keycloakUserPassword",
+      "value": "Pass#12345"
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "localToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "m2mToken",
+      "value": ""
+    },
+    {
+      "key": "verifyToken",
+      "value": ""
+    },
+    {
+      "key": "verifyEmail",
+      "value": ""
+    },
+    {
+      "key": "kc_alice",
+      "value": ""
+    },
+    {
+      "key": "kc_bob",
+      "value": ""
+    },
+    {
+      "key": "kc_carol",
+      "value": ""
+    },
+    {
+      "key": "kc_dave",
+      "value": ""
+    }
+  ]
+}

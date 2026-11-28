@@ -10,6 +10,7 @@ using ValidationException = Orders.Domain.Exceptions.ValidationException;
 namespace Orders.Api.GrpcServices;
 
 /// <summary>gRPC-адаптер над BLL замовлень (той самий IOrderService, що й у REST-контролера). Винятки домену -> RpcException.</summary>
+[Microsoft.AspNetCore.Authorization.Authorize(Policy = Platform.Security.ApiScopes.OrdersRead)]   // Лаб. 09: M2M — токен Client Credentials зі scope
 public sealed class OrdersGrpcService(IOrderService orders) : OrdersService.OrdersServiceBase
 {
     public override async Task<OrderReply> GetOrder(GetOrderRequest request, ServerCallContext context)

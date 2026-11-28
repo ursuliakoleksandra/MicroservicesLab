@@ -1,3 +1,6 @@
+using Platform.Security;
+using Platform.Security.Authentication;
+using Platform.Security.Authorization;
 using AutoMapper;
 using Reviews.Application;
 using Reviews.Application.Common.Mappings;
@@ -52,6 +55,10 @@ builder.Services.AddGrpc(o => o.Interceptors.Add<GrpcLoggingInterceptor>());
 // узгоджується автоматично (ALPN). Без TLS для gRPC потрібен окремий endpoint лише з HTTP/2.
 builder.WebHost.ConfigureKestrel(k => k.ConfigureEndpointDefaults(l => l.Protocols = HttpProtocols.Http1AndHttp2));
 
+// ---------- Лаб. 09: автентифікація (Local / IdentityServer / Keycloak) і авторизація за дозволами ----------
+builder.AddPlatformAuthentication(ApiResourceNames.Reviews);
+builder.Services.AddPlatformAuthorization();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -59,6 +66,9 @@ var app = builder.Build();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseExceptionHandler();
+
+app.UseAuthentication();            // Лаб. 09: JWT (Local / IdentityServer / Keycloak)
+app.UseAuthorization();             // [RequirePermission] і scope-політики
 
 if (app.Environment.IsDevelopment())
 {

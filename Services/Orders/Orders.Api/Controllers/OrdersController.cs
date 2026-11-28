@@ -1,3 +1,5 @@
+using Platform.Security;
+using Platform.Security.Authorization;
 using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using Orders.Bll.Dtos;
@@ -12,6 +14,7 @@ namespace Orders.Api.Controllers;
 public class OrdersController(IOrderService orders) : ControllerBase
 {
     /// <summary>Замовлення з позиціями. Поле rowVersion потрібне для PUT .../details.</summary>
+    [RequirePermission(Permissions.Orders.Read)]
     [HttpGet("{id:long}")]
     [ProducesResponseType<OrderDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -19,6 +22,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
         => Ok(await orders.GetByIdAsync(id, ct));                      // NotFound -> 404 обробником
 
     /// <summary>Замовлення клієнта (фільтр за статусом, пагінація).</summary>
+    [RequirePermission(Permissions.Orders.Read)]
     [HttpGet]
     [ProducesResponseType<PagedResultDto<OrderSummaryDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -32,6 +36,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
         => Ok(await orders.GetCustomerOrdersAsync(customerId, status, page, pageSize, ct));
 
     /// <summary>Історія змін статусу.</summary>
+    [RequirePermission(Permissions.Orders.Read)]
     [HttpGet("{id:long}/history")]
     [ProducesResponseType<IReadOnlyList<OrderStatusHistoryDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -39,6 +44,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
         => Ok(await orders.GetHistoryAsync(id, ct));
 
     /// <summary>Створення замовлення (назва й ціна товару фіксуються як знімок).</summary>
+    [RequirePermission(Permissions.Orders.Create)]
     [HttpPost]
     [ProducesResponseType<OrderDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -49,6 +55,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
     }
 
     /// <summary>Зміна адреси/коментаря з оптимістичною конкурентністю (rowVersion).</summary>
+    [RequirePermission(Permissions.Orders.Update)]
     [HttpPut("{id:long}/details")]
     [ProducesResponseType<OrderDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -58,6 +65,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
         => Ok(await orders.UpdateDetailsAsync(id, input, ct));
 
     /// <summary>М'яке видалення (лише Submitted / Cancelled).</summary>
+    [RequirePermission(Permissions.Orders.Delete)]
     [HttpDelete("{id:long}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -69,6 +77,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
     }
 
     /// <summary>Підтвердити замовлення: статус + залишки товарів в одній транзакції.</summary>
+    [RequirePermission(Permissions.Orders.Approve)]
     [HttpPost("{id:long}/confirm")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -80,6 +89,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
     }
 
     /// <summary>Оплатити підтверджене замовлення.</summary>
+    [RequirePermission(Permissions.Orders.Update)]
     [HttpPost("{id:long}/pay")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -92,6 +102,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
     }
 
     /// <summary>Відвантажити (лише оплачене замовлення, інакше 409).</summary>
+    [RequirePermission(Permissions.Orders.Update)]
     [HttpPost("{id:long}/ship")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -103,6 +114,7 @@ public class OrdersController(IOrderService orders) : ControllerBase
     }
 
     /// <summary>Скасувати (лише до оплати; залишки повертаються).</summary>
+    [RequirePermission(Permissions.Orders.Update)]
     [HttpPost("{id:long}/cancel")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]

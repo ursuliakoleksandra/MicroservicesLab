@@ -13,6 +13,7 @@ namespace Catalog.Api.GrpcServices;
 /// REST-контролер, тому кеш (L1 + Redis) працює для обох протоколів без дублювання коду.
 /// Доменні винятки перетворюються на RpcException з відповідним статусом, а не на Unknown/Internal.
 /// </summary>
+[Microsoft.AspNetCore.Authorization.Authorize(Policy = Platform.Security.ApiScopes.ProductsRead)]   // Лаб. 09: M2M — токен Client Credentials зі scope
 public sealed class CatalogGrpcService(IProductService products, ILogger<CatalogGrpcService> logger)
     : CatalogService.CatalogServiceBase
 {

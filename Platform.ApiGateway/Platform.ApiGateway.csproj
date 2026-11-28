@@ -6,4 +6,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Platform.ServiceDefaults\Platform.ServiceDefaults.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Platform.Security\Platform.Security.csproj" />
+  </ItemGroup>
 </Project>

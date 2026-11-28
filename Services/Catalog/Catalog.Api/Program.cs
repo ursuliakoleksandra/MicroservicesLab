@@ -1,3 +1,6 @@
+using Platform.Security;
+using Platform.Security.Authentication;
+using Platform.Security.Authorization;
 using Catalog.Api.ErrorHandling;
 using Catalog.Bll.Mapping;
 using Catalog.Bll.Services;
@@ -88,6 +91,10 @@ builder.WebHost.ConfigureKestrel(k => k.ConfigureEndpointDefaults(l => l.Protoco
 // Лаб. 07: SQL Server, Redis (Degraded), статистика кешу та gRPC Health Checking Protocol
 builder.Services.AddCatalogHealthChecks(connectionString, builder.Configuration.GetConnectionString("redis"));
 
+// ---------- Лаб. 09: автентифікація (Local / IdentityServer / Keycloak) і авторизація за дозволами ----------
+builder.AddPlatformAuthentication(ApiResourceNames.Products);
+builder.Services.AddPlatformAuthorization();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -105,6 +112,9 @@ using (var scope = app.Services.CreateScope())
 
 app.UseMiddleware<CorrelationIdMiddleware>();   // спільний, з ServiceDefaults
 app.UseExceptionHandler();                            // глобальна обробка: виняток -> ProblemDetails (логується один раз)
+
+app.UseAuthentication();            // Лаб. 09: JWT (Local / IdentityServer / Keycloak)
+app.UseAuthorization();             // [RequirePermission] і scope-політики
 
 if (app.Environment.IsDevelopment())
 {

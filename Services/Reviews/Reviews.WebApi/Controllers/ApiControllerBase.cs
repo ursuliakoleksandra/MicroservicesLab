@@ -6,6 +6,7 @@ namespace Reviews.WebApi.Controllers;
 
 /// <summary>Базовий контролер: доступ до ISender (MediatR). Контролери лише передають команди й запити — без бізнес-логіки й без доступу до БД.</summary>
 [ApiController]
+[Microsoft.AspNetCore.Authorization.Authorize]   // Лаб. 09: усі ендпоінти Відгуків — лише для автентифікованих (claims токена доступні в обробниках)
 [Produces("application/json")]
 public abstract class ApiControllerBase : ControllerBase
 {

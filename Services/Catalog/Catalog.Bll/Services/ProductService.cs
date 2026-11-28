@@ -130,6 +130,19 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
         return mapper.Map<ProductDto>(product);
     }
 
+    public async Task<ProductDto> PublishAsync(long id, CancellationToken ct)
+    {
+        var product = await FindAsync(id, ct);
+        if (product.IsActive) return mapper.Map<ProductDto>(product);          // уже опубліковано: нічого не змінюється й не публікується
+
+        product.SetActive(true);
+        await uow.SaveChangesAsync(ct);
+        await InvalidateAsync(id, "ProductPublished", ct);
+        await PublishAsync(new ProductActivityChangedEvent(id, product.Name, true), CatalogRoutingKeys.ActivityChanged, ct);
+        logger.LogInformation("Product {ProductId} published", id);
+        return mapper.Map<ProductDto>(product);
+    }
+
     public async Task<ProductDto> AddStockAsync(long id, StockChangeDto input, CancellationToken ct)
     {
         var product = await FindAsync(id, ct);

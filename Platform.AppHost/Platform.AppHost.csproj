@@ -14,6 +14,8 @@
     <PackageReference Include="Aspire.Hosting.MongoDB" Version="9.5.0" />
     <PackageReference Include="Aspire.Hosting.Redis" Version="9.5.0" />
     <PackageReference Include="Aspire.Hosting.RabbitMQ" Version="9.5.0" />
+    <!-- Keycloak-інтеграція Aspire має лише preview-версії (9.5.x-preview.*) -->
+    <PackageReference Include="Aspire.Hosting.Keycloak" Version="9.5.0-preview.*" />
   </ItemGroup>
 
   <!-- AppHost посилається на всі проєкти; сервіси про AppHost нічого не знають -->
@@ -24,6 +26,9 @@
     <ProjectReference Include="..\Platform.ApiGateway\Platform.ApiGateway.csproj" />
     <ProjectReference Include="..\Platform.Aggregator\Platform.Aggregator.csproj" />
     <ProjectReference Include="..\Platform.DbInit\Platform.DbInit.csproj" />
+    <ProjectReference Include="..\Services\Auth\TechNest.Auth.Api\TechNest.Auth.Api.csproj" />
+    <ProjectReference Include="..\Services\IdentityServer\TechNest.IdentityServer\TechNest.IdentityServer.csproj" />
+    <ProjectReference Include="..\Services\Payments\TechNest.Payments.Api\TechNest.Payments.Api.csproj" />
   </ItemGroup>
 
 </Project>

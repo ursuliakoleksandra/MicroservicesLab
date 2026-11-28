@@ -14,6 +14,7 @@ namespace Reviews.WebApi.GrpcServices;
 /// gRPC-адаптер над Application-шаром: той самий MediatR-запит GetReviewsListQuery, що й у REST-контролера
 /// (валідація й логування pipeline працюють без змін). Винятки -> RpcException з відповідним статусом.
 /// </summary>
+[Microsoft.AspNetCore.Authorization.Authorize(Policy = Platform.Security.ApiScopes.ReviewsRead)]   // Лаб. 09: M2M — токен Client Credentials зі scope
 public sealed class ReviewsGrpcService(ISender sender) : ReviewsService.ReviewsServiceBase
 {
     private const int DefaultPerProduct = 5, MaxPerProduct = 20, MaxProducts = 100;

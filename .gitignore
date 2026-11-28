@@ -5,3 +5,7 @@ obj/
 *.user
 logs/
 appsettings.Local.json
+
+# Pulumi / локальні результати Лаб. 09
+matrix-result.csv
+Pulumi.*.yaml.bak

@@ -5,6 +5,7 @@ using Platform.Aggregator.Models;
 namespace Platform.Aggregator.Controllers;
 
 [ApiController]
+[Microsoft.AspNetCore.Authorization.Authorize]   // Лаб. 09: лише автентифікованим (Gateway теж перевіряє токен)
 [Route("api/aggregator")]
 [Produces("application/json")]
 public class AggregatorController(CachedOrderAggregationService aggregation, ILogger<AggregatorController> logger) : ControllerBase

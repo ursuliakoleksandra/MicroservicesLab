@@ -1,0 +1,28 @@
+@model TechNest.IdentityServer.Models.LoginViewModel
+@{ Layout = null; }
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="utf-8" />
+    <title>TechNest — вхід</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #f4f5f7; display: grid; place-items: center; height: 100vh; margin: 0; }
+        form { background: #fff; padding: 2rem; border-radius: 8px; width: 320px; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+        input { width: 100%; padding: .5rem; margin: .25rem 0 1rem; box-sizing: border-box; }
+        button { width: 100%; padding: .6rem; }
+        .error { color: #b00020; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+<form method="post">
+    <h2>TechNest IdentityServer</h2>
+    @if (!string.IsNullOrEmpty(Model.Error)) { <div class="error">@Model.Error</div> }
+    <input type="hidden" asp-for="ReturnUrl" />
+    <label>Логін</label>
+    <input asp-for="UserName" autofocus />
+    <label>Пароль</label>
+    <input asp-for="Password" />
+    <button type="submit">Увійти</button>
+</form>
+</body>
+</html>

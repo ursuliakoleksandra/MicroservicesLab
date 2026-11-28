@@ -1,3 +1,5 @@
+using Platform.Security;
+using Platform.Security.Authorization;
 using Catalog.Bll.Dtos;
 using Catalog.Bll.Services;
 using FluentValidation;
@@ -10,11 +12,13 @@ namespace Catalog.Api.Controllers;
 [Produces("application/json")]
 public class CategoriesController(ICategoryService service) : ControllerBase
 {
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet]
     [ProducesResponseType<IReadOnlyList<CategoryDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<CategoryDto>>> GetAll(CancellationToken ct)
         => Ok(await service.GetAllAsync(ct));
 
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet("{id:long}")]
     [ProducesResponseType<CategoryDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -22,6 +26,7 @@ public class CategoriesController(ICategoryService service) : ControllerBase
         => Ok(await service.GetByIdAsync(id, ct));
 
     /// <summary>Категорія з товарами (Explicit Loading: категорія — 1-й SQL-запит, товари — 2-й).</summary>
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet("{id:long}/products")]
     [ProducesResponseType<CategoryWithProductsDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -29,6 +34,7 @@ public class CategoriesController(ICategoryService service) : ControllerBase
         => Ok(await service.GetWithProductsAsync(id, ct));
 
     /// <summary>Товари, додані в категорію після дати since (LINQ M:N за полем AddedAt проміжної сутності).</summary>
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet("recent-products")]
     [ProducesResponseType<IReadOnlyList<ProductDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -36,6 +42,7 @@ public class CategoriesController(ICategoryService service) : ControllerBase
         [FromQuery] string categoryName, CancellationToken ct, [FromQuery] DateTime? since = null)
         => Ok(await service.GetRecentlyAddedProductsAsync(categoryName, since, ct));
 
+    [RequirePermission(Permissions.Products.Create)]
     [HttpPost]
     [ProducesResponseType<CategoryDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

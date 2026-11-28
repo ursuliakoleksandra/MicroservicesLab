@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Platform.Security.Authentication;
 using Platform.ServiceDefaults;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Model;
@@ -7,9 +8,26 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();      // Serilog, OpenTelemetry, health checks, service discovery
 
+// Лаб. 09: Gateway перевіряє JWT усіх трьох провайдерів (перший рубіж); сервіси перевіряють токен повторно
+builder.AddPlatformAuthentication();
+builder.Services.AddAuthorizationBuilder()   // політики для ReverseProxy:Routes:*:AuthorizationPolicy ("anonymous" — вбудована в YARP)
+    .AddPolicy("authenticated", p => p.RequireAuthenticatedUser());
+
 // маршрути й кластери — в appsettings.json (секція ReverseProxy); адреси http://<ім'я-ресурсу> розв'язує service discovery Aspire
 builder.Services.AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
+    .AddTransforms(ctx =>
+    {
+        // X-User-Id: sub із перевіреного токена (для логів/аудиту downstream; клієнтський заголовок затирається).
+        // Заголовок Authorization YARP передає далі без змін — сервіси перевіряють той самий токен.
+        ctx.AddRequestTransform(t =>
+        {
+            t.ProxyRequest.Headers.Remove("X-User-Id");
+            var sub = t.HttpContext.User.FindFirst("sub")?.Value;
+            if (!string.IsNullOrEmpty(sub)) t.ProxyRequest.Headers.TryAddWithoutValidation("X-User-Id", sub);
+            return ValueTask.CompletedTask;
+        });
+    })
     .AddServiceDiscoveryDestinationResolver();
 
 var app = builder.Build();
@@ -40,6 +58,8 @@ app.Use(async (context, next) =>
             cluster, error.Error, route, context.Response.StatusCode);
 });
 
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapReverseProxy();
 app.MapDefaultEndpoints();         // /health і /alive
 app.Run();

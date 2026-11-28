@@ -28,4 +28,8 @@
     <!-- Лаб. 05: спільні налаштування логування, трасування, health checks, service discovery -->
     <ProjectReference Include="..\..\..\Platform.ServiceDefaults\Platform.ServiceDefaults.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Лаб. 09: JWT-автентифікація, [RequirePermission], scope-політики -->
+    <ProjectReference Include="..\..\..\Platform.Security\Platform.Security.csproj" />
+  </ItemGroup>
 </Project>

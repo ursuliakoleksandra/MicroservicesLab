@@ -1,3 +1,5 @@
+using Platform.Security;
+using Platform.Security.Authorization;
 using Catalog.Bll.Dtos;
 using Catalog.Bll.Services;
 using FluentValidation;
@@ -10,11 +12,13 @@ namespace Catalog.Api.Controllers;
 [Produces("application/json")]
 public class BrandsController(IBrandService service) : ControllerBase
 {
+    [RequirePermission(Permissions.Products.Read)]
     [HttpGet]
     [ProducesResponseType<IReadOnlyList<BrandDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<BrandDto>>> GetAll(CancellationToken ct)
         => Ok(await service.GetAllAsync(ct));
 
+    [RequirePermission(Permissions.Products.Create)]
     [HttpPost]
     [ProducesResponseType<BrandDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
