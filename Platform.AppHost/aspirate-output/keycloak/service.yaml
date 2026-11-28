@@ -1,0 +1,16 @@
+# Маніфест у форматі Aspirate (Platform.AppHost/aspirate-output/<ресурс>/...). Складено ВРУЧНУ за структурою `aspirate generate`; без секретів.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: technest
+  labels:
+    app: keycloak
+spec:
+  type: ClusterIP
+  selector:
+    app: keycloak
+  ports:
+    - name: main
+      port: 8080
+      targetPort: 8080

@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: technest
+resources:
+  - namespace.yaml
+  - infra/sql.yaml
+  - infra/identityserver-sql.yaml
+  - infra/mongo.yaml
+  - infra/redis.yaml
+  - infra/rabbitmq.yaml
+  - infra/keycloak.yaml
+  - jobs/orders-db-init.yaml
+  - apps/gateway/configmap.yaml
+  - apps/gateway/deployment.yaml
+  - apps/gateway/service.yaml
+  - apps/aggregator/configmap.yaml
+  - apps/aggregator/deployment.yaml
+  - apps/aggregator/service.yaml
+  - apps/orders-api/configmap.yaml
+  - apps/orders-api/deployment.yaml
+  - apps/orders-api/service.yaml
+  - apps/catalog-api/configmap.yaml
+  - apps/catalog-api/deployment.yaml
+  - apps/catalog-api/service.yaml
+  - apps/reviews-api/configmap.yaml
+  - apps/reviews-api/deployment.yaml
+  - apps/reviews-api/service.yaml
+  - apps/auth-api/configmap.yaml
+  - apps/auth-api/deployment.yaml
+  - apps/auth-api/service.yaml
+  - apps/identityserver/configmap.yaml
+  - apps/identityserver/deployment.yaml
+  - apps/identityserver/service.yaml
+  - apps/payments-api/configmap.yaml
+  - apps/payments-api/deployment.yaml
+  - apps/payments-api/service.yaml

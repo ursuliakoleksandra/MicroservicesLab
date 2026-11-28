@@ -1,0 +1,16 @@
+# Маніфест у форматі Aspirate (Platform.AppHost/aspirate-output/<ресурс>/...). Складено ВРУЧНУ за структурою `aspirate generate`; без секретів.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identityserver-env
+  namespace: technest
+  labels:
+    app: identityserver
+data:
+  ASPNETCORE_ENVIRONMENT: "Development"
+  ASPNETCORE_URLS: "http://+:8080"
+  Jwt__Issuer: "technest-auth"
+  Jwt__Audience: "technest-api"
+  IdentityServer__Authority: "http://identityserver:8080"
+  Keycloak__Authority: "http://keycloak:8080/realms/TechNestRealm"
+  IdentityServer__IssuerUri: "http://identityserver:8080"

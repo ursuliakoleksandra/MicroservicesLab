@@ -11,6 +11,7 @@
 | № 07 | Resilience (retry, circuit breaker, таймаути), бізнес-метрики, health checks | [Частина 7](#частина-7--resilience-метрики-та-health-checks-лаб-07) |
 | № 08 | Асинхронна взаємодія: RabbitMQ, інтеграційні події, ідемпотентні споживачі, retry/DLQ, трасування через брокер | [Частина 8](#частина-8--асинхронна-взаємодія-rabbitmq-лаб-08) |
 | № 09 | Безпека: ASP.NET Identity + JWT, Duende IdentityServer (OAuth 2.0), Keycloak + Pulumi, permission-based авторизація | [Частина 9](#частина-9--автентифікація-й-авторизація-лаб-09) |
+| № 10 | Контейнеризація й Kubernetes: Dockerfile, Deployment/Service/ConfigMap/Secret, probes, Aspirate | [Частина 10](#частина-10--docker-і-kubernetes-лаб-10) |
 
 # Частина 1 — три бази даних (Лаб. 01)
 
@@ -50,6 +51,9 @@ Platform.slnx              одне рішення на всю платформ�
 Platform.AppHost/          оркестрація .NET Aspire (AppHost.cs)
 Platform.Messaging/        (Лаб. 08) події, publisher, топологія RabbitMQ, consumer (BackgroundService), трасування
 Platform.Messaging.Tests/  (Лаб. 08) unit-тести подій і топології
+Dockerfile (Лаб. 10)       багатоетапні образи кожного сервісу поруч із csproj; .dockerignore у корені
+deploy/k8s/                 (Лаб. 10) ручні маніфести Kubernetes і скрипти (образи, Secret-и, розгортання)
+Platform.AppHost/aspirate-output/  (Лаб. 10) маніфести платформи у форматі Aspirate (формат `aspirate generate`)
 Platform.Security/         (Лаб. 09) JWT-автентифікація трьох емітентів, [RequirePermission], scope-політики, Client Credentials
 Platform.Security.Tests/   (Лаб. 09) unit-тести PermissionEvaluator
 Services/Auth/             (Лаб. 09, ч. 1) Auth Service: ASP.NET Identity + JWT + refresh-токени
@@ -1666,3 +1670,103 @@ claim `authorization.permissions` — без звернення до Keycloak). 
 * **Чому permissions перевіряються локально.** Немає виклику Keycloak на кожен запит (швидко, стійко); токен містить усі дозволи.
 * **Чому payments — лише admin.** Найчутливіший ресурс: принцип найменших привілеїв.
 * **IaC (Pulumi).** Налаштування Keycloak описано кодом: перегляд (`preview`), версіонування, відтворюваність, `destroy` для очищення.
+
+
+# Частина 10 — Docker і Kubernetes (Лаб. 10)
+
+Платформа з Aspire (локальна розробка) переноситься в Kubernetes: кожен сервіс — окремий образ, кожен образ — `Deployment` із двома репліками.
+Aspire AppHost лишається інструментом розробки; у кластері його роль виконують маніфести. Деталі запуску — `deploy/k8s/README.md`.
+
+## 70. Dockerfile
+
+Для **кожного** сервісу (`Platform.ApiGateway`, `Platform.Aggregator`, `Orders.Api`, `Catalog.Api`, `Reviews.WebApi`, `TechNest.Auth.Api`, `TechNest.IdentityServer`, `TechNest.Payments.Api`)
+і для задачі `Platform.DbInit` — багатоетапний `Dockerfile` поруч із csproj. Контекст збірки — **корінь репозиторію** (проєкти посилаються один на одного):
+
+```powershell
+docker build -f Services/Catalog/Catalog.Api/Dockerfile -t technest/catalog-api:latest .
+docker build -f Platform.ApiGateway/Dockerfile          -t technest/gateway:latest .
+```
+
+* **Етап `build`** (`sdk:9.0`): спочатку копіюються лише `*.csproj` усіх проєктів у ланцюжку залежностей і виконується `dotnet restore` — цей шар кешується й
+  не перезбирається, поки не змінилися пакети; потім копіюється код і `dotnet publish -c Release --no-restore`.
+* **Етап `final`** (`aspnet:9.0`): лише runtime і результат публікації (без SDK, образ менший), `USER $APP_UID` (не root), `ASPNETCORE_URLS=http://+:8080`, `EXPOSE 8080`.
+* `.dockerignore` у корені виключає `bin/`, `obj/`, `.git`, `docs/`, `deploy/` — менший контекст і стабільний кеш.
+
+## 71. Маніфести
+
+| Ресурс | Файли | Суть |
+|--------|-------|------|
+| Deployment | `deploy/k8s/apps/<сервіс>/deployment.yaml` | `replicas: 2`, `imagePullPolicy: IfNotPresent`, `containerPort: 8080` (+ `8081` для gRPC), `envFrom` (ConfigMap + Secret), probes, requests/limits |
+| Service | `.../service.yaml` | `ClusterIP`, `port: 8080 → targetPort: 8080`, `selector: app: <сервіс>` (+ порт 8081 для gRPC) |
+| ConfigMap | `.../configmap.yaml` (`<сервіс>-env`) | не секретні налаштування: `services__<сервіс>__http__0: http://<сервіс>:8080`, `Jwt__Issuer`, `*__Authority`, `Aggregator__*` |
+| Secret | створює `deploy/k8s/scripts/create-secrets.*` | `kubectl create secret generic <сервіс>-secrets --from-literal=...`: рядки підключення, `Jwt__SecretKey`, секрет клієнта. У Git немає |
+| Інфраструктура | `deploy/k8s/infra/*.yaml` | SQL Server ×2, MongoDB, Redis, RabbitMQ (+Management), Keycloak; PVC для даних |
+| Job | `deploy/k8s/jobs/orders-db-init.yaml` | одноразово застосовує SQL-скрипти Лаб. 01 до `OrdersDb` |
+
+**Probes** використовують endpoint-и з Лаб. 07, які доступні в усіх середовищах (`MapDefaultEndpoints`):
+
+* `livenessProbe` → `/health/live` — лише «процес живий» (без залежностей); збій → kubelet **перезапускає** контейнер;
+* `readinessProbe` → `/health/ready` — залежності (БД, Redis, брокер, downstream gRPC); збій → под **виводиться з балансування**, але не перезапускається;
+* `startupProbe` → `/health/startup` — дає повільному старту (міграції, сідінг, прогрівання) до 3 хвилин, не вмикаючи liveness завчасно.
+
+**Чому дві репліки та статус «Degraded».** `/health/ready` повертає 200 для Degraded (наприклад, Redis недоступний: кеш необов'язковий) і 503 лише для Unhealthy. Тому падіння кешу не «вимикає» сервіс.
+
+## 72. Service discovery і gRPC без Aspire
+
+Aspire передавав адреси залежностей як `services__<ім'я>__http__0`. Той самий формат читає `Microsoft.Extensions.ServiceDiscovery` у кластері, тож **код не змінюється**:
+у ConfigMap Gateway записано `services__orders-api__http__0: "http://orders-api:8080"`, де `orders-api` — DNS-ім'я `Service`.
+
+gRPC потребує HTTP/2, а без TLS (кластер) Kestrel не узгоджує HTTP/2 на порту з HTTP/1.1. Тому сервіси слухають **два порти**: `8080` (REST, HTTP/1.1; probes) і `8081` (gRPC, `Http2`);
+у Aggregator адресу будує `Aggregator__GrpcAddressFormat` (`http://_grpc.{0}` → ключ `services__<ім'я>__grpc__0`). Локально (Aspire) формат лишається `https://{0}`.
+
+## 73. Aspirate
+
+`Platform.AppHost/aspirate-output/` містить маніфести всієї платформи у структурі Aspirate: тека на ресурс (`deployment.yaml`, `service.yaml`, `<ім'я>-env.yaml`, `kustomization.yaml`) і кореневий `kustomization.yaml`.
+**Вони складені вручну** (інструмент не запускався в середовищі, де готувався проєкт), тому на своїй машині їх можна перегенерувати:
+
+```powershell
+dotnet tool install -g aspirate
+cd Platform.AppHost                 # саме директорія проєкту AppHost, а не корінь .slnx
+aspirate init                       # один раз: реєстр і тег образів
+aspirate generate                   # образи + маніфести в ./aspirate-output
+aspirate apply                      # або: kubectl apply -k ./aspirate-output
+aspirate destroy                    # видалити платформу перед ручним розгортанням
+```
+
+`aspirate-state.json` може містити значення секретів і додано до `.gitignore`. Різниця підходів: ручні маніфести — повний контроль (probes, ресурси, порти), Aspirate — швидкий старт із моделі AppHost,
+але probes, `imagePullPolicy` і gRPC-порти доводиться доводити вручну; Secret-и в обох випадках створюються командою `kubectl create secret`.
+
+## 74. Перевірка
+
+```powershell
+kubectl -n technest get pods                     # усі 2/2 Running (по дві репліки), orders-db-init — Completed
+kubectl -n technest describe pod <под>           # Liveness/Readiness/Startup, envFrom, Image pull policy
+kubectl -n technest get svc,endpoints            # у кожного Service по 2 endpoint-и
+kubectl -n technest port-forward svc/gateway 5000:8080
+curl http://localhost:5000/health                # через Gateway; curl -i .../api/products -> 401 (без токена)
+kubectl -n technest delete pod <под-orders-api>  # Deployment створює новий; Service не втрачає трафік
+kubectl -n technest scale deploy/orders-api --replicas=3
+kubectl -n technest logs deploy/aggregator       # транспорт gRPC, адреси http://_grpc...
+```
+
+## 75. Відповідність критеріям Лаб. 10
+
+| Критерій | Де |
+|----------|----|
+| `aspirate-output` для всієї платформи | `Platform.AppHost/aspirate-output/` (8 застосунків, 6 інфраструктурних ресурсів, Job) |
+| Багатоетапні Dockerfile для catalog-api і gateway, csproj копіюється першим | `Services/Catalog/Catalog.Api/Dockerfile`, `Platform.ApiGateway/Dockerfile` (+ решта сервісів) |
+| Deployment: replicas 2, IfNotPresent, 8080, liveness `/health/live`, readiness `/health/ready` | `deploy/k8s/apps/*/deployment.yaml`, `Platform.AppHost/aspirate-output/*/deployment.yaml` |
+| ClusterIP Service `port → targetPort 8080` із selector | `.../service.yaml` |
+| ConfigMap (`services__<ім'я>__http__0`), Secret через `kubectl create secret`, `envFrom` | `.../configmap.yaml`, `deploy/k8s/scripts/create-secrets.*` |
+| Health endpoints у всіх середовищах | `Platform.ServiceDefaults/Extensions.cs` (`MapDefaultEndpoints`) |
+
+## 76. Контрольні питання (коротко)
+
+* **Навіщо багатоетапна збірка.** SDK потрібен лише для збірки; у фінальний образ потрапляє тільки runtime і публікація — менший розмір і поверхня атаки.
+* **Навіщо спочатку копіювати csproj.** Шар `restore` залежить лише від csproj: зміна коду не змушує повторно завантажувати пакети.
+* **liveness vs readiness vs startup.** Liveness — перезапуск зависшого процесу; readiness — тимчасове виведення з трафіку; startup — відкладає liveness, поки сервіс стартує.
+* **Чому liveness без залежностей.** Якби liveness перевіряв БД, її збій перезапускав би всі поди (каскад) і не допоміг би.
+* **ConfigMap vs Secret.** ConfigMap — відкрита конфігурація, Secret — паролі; Secret лише base64, тому його не комітять і обмежують RBAC; створюється `kubectl create secret`.
+* **`ClusterIP`.** Внутрішня віртуальна IP + DNS-ім'я; зовні трафік іде через Gateway (`port-forward`, у проді — Ingress/LoadBalancer).
+* **`replicas: 2` і RabbitMQ.** Дві репліки споживача — конкурентні споживачі однієї черги; ідемпотентність (`ProcessedEvents`) робить повторну доставку безпечною.
+* **Aspirate vs ручні маніфести.** Aspirate генерує маніфести з моделі AppHost (швидко, але типові значення); ручні дають контроль над probes, ресурсами й портами.

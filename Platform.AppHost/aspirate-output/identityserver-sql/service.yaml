@@ -1,0 +1,16 @@
+# Маніфест у форматі Aspirate (Platform.AppHost/aspirate-output/<ресурс>/...). Складено ВРУЧНУ за структурою `aspirate generate`; без секретів.
+apiVersion: v1
+kind: Service
+metadata:
+  name: identityserver-sql
+  namespace: technest
+  labels:
+    app: identityserver-sql
+spec:
+  type: ClusterIP
+  selector:
+    app: identityserver-sql
+  ports:
+    - name: main
+      port: 1433
+      targetPort: 1433

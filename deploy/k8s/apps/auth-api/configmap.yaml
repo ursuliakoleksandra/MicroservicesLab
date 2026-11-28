@@ -1,0 +1,16 @@
+# Рукописний маніфест (kubectl apply -k). Тут немає жодних секретів: паролі та рядки підключення лежать у Secret, який створює
+# скрипт deploy/k8s/scripts/create-secrets.* командою `kubectl create secret generic` і який не потрапляє в Git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-api-env
+  namespace: technest
+  labels:
+    app: auth-api
+data:
+  ASPNETCORE_ENVIRONMENT: "Development"
+  ASPNETCORE_URLS: "http://+:8080"
+  Jwt__Issuer: "technest-auth"
+  Jwt__Audience: "technest-api"
+  IdentityServer__Authority: "http://identityserver:8080"
+  Keycloak__Authority: "http://keycloak:8080/realms/TechNestRealm"

@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/.vs/
+.git/
+*.md
+docs/
+postman/
+deploy/
+**/aspirate-output/
+Pulumi/
+**/appsettings.Local.json
+**/logs/

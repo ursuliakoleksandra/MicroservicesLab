@@ -1,0 +1,16 @@
+# Маніфест у форматі Aspirate (Platform.AppHost/aspirate-output/<ресурс>/...). Складено ВРУЧНУ за структурою `aspirate generate`; без секретів.
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator
+  namespace: technest
+  labels:
+    app: aggregator
+spec:
+  type: ClusterIP
+  selector:
+    app: aggregator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

@@ -28,6 +28,12 @@ builder.Services.AddClientCredentials(builder.Configuration);
 // ---------- транспорт до мікросервісів: Grpc (за замовчуванням) або Http (Лаб. 05) — для порівняння затримок ----------
 var transport = builder.Configuration["Aggregator:Transport"] ?? "Grpc";
 
+// Лаб. 10: gRPC-адреса. Локально (Aspire) — HTTPS + ALPN: "https://{0}". У Kubernetes TLS немає, тому gRPC іде на окремий
+// HTTP/2-порт 8081 (h2c): ConfigMap задає Aggregator__GrpcAddressFormat="http://_grpc.{0}" (endpoint з назвою "grpc",
+// ключ services__<name>__grpc__0), а звичайний HTTP-трафік лишається на порту 8080.
+var grpcAddressFormat = builder.Configuration["Aggregator:GrpcAddressFormat"] ?? "https://{0}";
+Uri GrpcAddress(string service) => new(string.Format(grpcAddressFormat, service));
+
 if (string.Equals(transport, "Http", StringComparison.OrdinalIgnoreCase))
 {
     // Typed HttpClients: адреси за логічними іменами ресурсів AppHost ("https+http" = HTTPS, якщо є, інакше HTTP)
@@ -51,15 +57,15 @@ else
     //
     // Лаб. 07: для кожного клієнта (1) retry за gRPC-СТАТУСАМИ (ServiceConfig каналу: HTTP-обробник їх не бачить, бо статус іде
     // в трейлерах відповіді з HTTP 200) і (2) HTTP-рівень (мережеві збої, таймаути, circuit breaker) за профілем сервісу.
-    builder.Services.AddGrpcClient<OrdersService.OrdersServiceClient>(o => o.Address = new Uri("https://orders-api"))
+    builder.Services.AddGrpcClient<OrdersService.OrdersServiceClient>(o => o.Address = GrpcAddress("orders-api"))
         .AddGrpcRetryPolicy(ServiceProfiles.Orders)
         .AddServiceResilience(ServiceProfiles.Orders, forGrpc: true)
         .AddHttpMessageHandler<ClientCredentialsTokenHandler>();   // Bearer-токен Client Credentials
-    builder.Services.AddGrpcClient<CatalogService.CatalogServiceClient>(o => o.Address = new Uri("https://catalog-api"))
+    builder.Services.AddGrpcClient<CatalogService.CatalogServiceClient>(o => o.Address = GrpcAddress("catalog-api"))
         .AddGrpcRetryPolicy(ServiceProfiles.Catalog)
         .AddServiceResilience(ServiceProfiles.Catalog, forGrpc: true)
         .AddHttpMessageHandler<ClientCredentialsTokenHandler>();
-    builder.Services.AddGrpcClient<ReviewsService.ReviewsServiceClient>(o => o.Address = new Uri("https://reviews-api"))
+    builder.Services.AddGrpcClient<ReviewsService.ReviewsServiceClient>(o => o.Address = GrpcAddress("reviews-api"))
         .AddGrpcRetryPolicy(ServiceProfiles.Reviews)
         .AddServiceResilience(ServiceProfiles.Reviews, forGrpc: true)
         .AddHttpMessageHandler<ClientCredentialsTokenHandler>();
@@ -82,9 +88,9 @@ builder.Services.AddSingleton<AggregatorMetrics>();               // Лаб. 07:
 
 // ---------- Лаб. 07: health checks залежностей (readiness) ----------
 // gRPC Health Checking Protocol: клієнти Health.HealthClient за іменами; критичні сервіси -> Unhealthy, некритичний (Відгуки) -> Degraded
-builder.Services.AddGrpcClient<Health.HealthClient>("orders-health", o => o.Address = new Uri("https://orders-api"));
-builder.Services.AddGrpcClient<Health.HealthClient>("catalog-health", o => o.Address = new Uri("https://catalog-api"));
-builder.Services.AddGrpcClient<Health.HealthClient>("reviews-health", o => o.Address = new Uri("https://reviews-api"));
+builder.Services.AddGrpcClient<Health.HealthClient>("orders-health", o => o.Address = GrpcAddress("orders-api"));
+builder.Services.AddGrpcClient<Health.HealthClient>("catalog-health", o => o.Address = GrpcAddress("catalog-api"));
+builder.Services.AddGrpcClient<Health.HealthClient>("reviews-health", o => o.Address = GrpcAddress("reviews-api"));
 
 var healthChecks = builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<GrpcDependencyHealthCheck>("orders-api", failureStatus: HealthStatus.Unhealthy,

@@ -1,0 +1,27 @@
+# Рукописний маніфест (kubectl apply -k). Тут немає жодних секретів: паролі та рядки підключення лежать у Secret, який створює
+# скрипт deploy/k8s/scripts/create-secrets.* командою `kubectl create secret generic` і який не потрапляє в Git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aggregator-env
+  namespace: technest
+  labels:
+    app: aggregator
+data:
+  ASPNETCORE_ENVIRONMENT: "Development"
+  ASPNETCORE_URLS: "http://+:8080"
+  Jwt__Issuer: "technest-auth"
+  Jwt__Audience: "technest-api"
+  IdentityServer__Authority: "http://identityserver:8080"
+  Keycloak__Authority: "http://keycloak:8080/realms/TechNestRealm"
+  services__orders-api__http__0: "http://orders-api:8080"
+  services__catalog-api__http__0: "http://catalog-api:8080"
+  services__reviews-api__http__0: "http://reviews-api:8080"
+  services__orders-api__grpc__0: "http://orders-api:8081"
+  services__catalog-api__grpc__0: "http://catalog-api:8081"
+  services__reviews-api__grpc__0: "http://reviews-api:8081"
+  Aggregator__Transport: "Grpc"
+  Aggregator__GrpcAddressFormat: "http://_grpc.{0}"
+  ClientCredentials__Authority: "http://identityserver:8080"
+  ClientCredentials__ClientId: "aggregator_service"
+  ClientCredentials__Scope: "orders.read products.read reviews.read"

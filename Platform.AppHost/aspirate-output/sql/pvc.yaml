@@ -1,0 +1,13 @@
+# Маніфест у форматі Aspirate (Platform.AppHost/aspirate-output/<ресурс>/...). Складено ВРУЧНУ за структурою `aspirate generate`; без секретів.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sql-data
+  namespace: technest
+  labels:
+    app: sql
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi

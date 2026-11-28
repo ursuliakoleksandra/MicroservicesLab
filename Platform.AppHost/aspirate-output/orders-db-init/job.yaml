@@ -1,0 +1,23 @@
+# Маніфест у форматі Aspirate (Platform.AppHost/aspirate-output/<ресурс>/...). Складено ВРУЧНУ за структурою `aspirate generate`; без секретів.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orders-db-init
+  namespace: technest
+  labels:
+    app: orders-db-init
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: orders-db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: orders-db-init
+          image: technest/orders-db-init:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: orders-db-init-secrets

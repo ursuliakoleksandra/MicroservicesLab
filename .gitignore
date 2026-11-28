@@ -9,3 +9,7 @@ appsettings.Local.json
 # Pulumi / локальні результати Лаб. 09
 matrix-result.csv
 Pulumi.*.yaml.bak
+
+# Лаб. 10: стан Aspirate може містити значення секретів — не комітити
+aspirate-state.json
+.env
