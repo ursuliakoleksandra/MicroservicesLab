@@ -4,7 +4,11 @@ using Reviews.Application.Common.Mappings;
 using Reviews.Infrastructure;
 using Reviews.WebApi.ErrorHandling;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Platform.Messaging;
+using Platform.Messaging.Events;
+using Platform.Messaging.Topology;
 using Platform.ServiceDefaults;
+using Reviews.Infrastructure.Messaging;
 using MediatR;
 using Reviews.WebApi.GrpcServices;
 using Reviews.WebApi.Metrics;
@@ -12,11 +16,16 @@ using Reviews.WebApi.Metrics;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();      // Лаб. 05: Serilog, OpenTelemetry, health checks (у т.ч. MongoDB), service discovery
+builder.AddMessaging();            // Лаб. 08: RabbitMQ (Aspire.RabbitMQ.Client), топологія, health check
 
 // ---------- кожен шар надає власний метод розширення ----------
 builder.Services
     .AddApplication(builder.Configuration)          // MediatR, behaviors, валідатори FluentValidation
     .AddInfrastructure(builder.Configuration);      // MongoDB: контекст, BSON-мапінг, репозиторії, індекси, сідінг, health check
+
+// ---------- Лаб. 08: споживач черги reviews.catalog-sync — денормалізована назва товару у відгуках ----------
+builder.Services.AddEventConsumer(MessagingTopology.ReviewsQueue, registry => registry
+    .Handle<ProductRenamedEvent, ProductRenamedHandler>());
 
 builder.Services.AddAutoMapper(cfg =>
 {

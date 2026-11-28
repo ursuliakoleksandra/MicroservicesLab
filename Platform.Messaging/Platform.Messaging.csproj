@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Aspire-інтеграція: реєструє IConnection (singleton), health check і телеметрію; тягне RabbitMQ.Client 7.x -->
+    <PackageReference Include="Aspire.RabbitMQ.Client" Version="9.5.0" />
+    <PackageReference Include="OpenTelemetry.Api" Version="1.12.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CorrelationContext і Serilog LogContext -->
+    <ProjectReference Include="..\Platform.ServiceDefaults\Platform.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

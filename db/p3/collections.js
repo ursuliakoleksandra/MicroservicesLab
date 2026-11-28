@@ -89,6 +89,20 @@ ensureCollection("productRatings", { $jsonSchema: {
   }
 } });
 
+/* ---------- processedEvents (Лаб. 08): журнал оброблених інтеграційних подій ---------- */
+// _id = EventId (рядок): унікальність гарантує сам _id; повторна вставка → duplicate key → подію вже оброблено.
+ensureCollection("processedEvents", { $jsonSchema: {
+  bsonType: "object",
+  required: ["_id", "eventType", "processedAt"],
+  properties: {
+    _id:         { bsonType: "string" },
+    eventType:   { bsonType: "string" },
+    processedAt: { bsonType: "date" }
+  }
+} });
+// записи старші за 30 діб видаляються автоматично (TTL): журнал не росте безмежно
+rdb.processedEvents.createIndex({ processedAt: 1 }, { expireAfterSeconds: 2592000, name: "ttl_processed_events" });
+
 /* ---------- Індекси (кожен — під запит) ---------- */
 // «відгуки товару, найновіші першими»
 rdb.reviews.createIndex({ productId: 1, createdAt: -1 }, { name: "ix_reviews_product_created" });

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Platform.ServiceDefaults.Correlation;
 using Serilog.Context;
 
 namespace Platform.ServiceDefaults;
@@ -39,6 +40,7 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next, ILogger<Correl
             return Task.CompletedTask;
         });
 
+        CorrelationContext.Current = correlationId;                  // Лаб. 08: CorrelationId потрапляє в інтеграційні події
         Activity.Current?.SetTag("correlation.id", correlationId);   // пошук trace за CorrelationId у Dashboard
 
         using (LogContext.PushProperty("CorrelationId", correlationId))

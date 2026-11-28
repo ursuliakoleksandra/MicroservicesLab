@@ -9,6 +9,8 @@ using Catalog.Domain.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Platform.Caching;
+using Platform.Messaging.Events;
+using Platform.Messaging.Publishing;
 using NSubstitute;
 using Xunit;
 
@@ -20,13 +22,14 @@ public class ProductServiceTests
     private readonly IUnitOfWork _uow = Substitute.For<IUnitOfWork>();
     private readonly IProductRepository _products = Substitute.For<IProductRepository>();
     private readonly IBrandRepository _brands = Substitute.For<IBrandRepository>();
+    private readonly IEventPublisher _publisher = Substitute.For<IEventPublisher>();
     private readonly ProductService _sut;
 
     public ProductServiceTests()
     {
         _uow.Products.Returns(_products);
         _uow.Brands.Returns(_brands);
-        _sut = new ProductService(_uow, CreateMapper(), NullLogger<ProductService>.Instance, NullTwoLevelCache.Instance);
+        _sut = new ProductService(_uow, CreateMapper(), NullLogger<ProductService>.Instance, NullTwoLevelCache.Instance, _publisher);
     }
 
     private static ServiceProvider BuildProvider()
@@ -97,6 +100,61 @@ public class ProductServiceTests
             _sut.RemoveStockAsync(1, new StockChangeDto { Quantity = 5 }, CancellationToken.None));
 
         await _uow.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ChangePrice_PublishesEvent_AfterSave()
+    {
+        var product = new Product(1, "Laptop", "LAP-1", 10m);
+        _products.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(product);
+
+        await _sut.ChangePriceAsync(1, new ChangePriceDto { Price = 15m }, CancellationToken.None);
+
+        Received.InOrder(() =>
+        {
+            _uow.SaveChangesAsync(Arg.Any<CancellationToken>());
+            _publisher.PublishAsync(Arg.Is<ProductPriceChangedEvent>(e => e.OldPrice == 10m && e.NewPrice == 15m),
+                "catalog-events", "product.price_changed", Arg.Any<CancellationToken>());
+        });
+    }
+
+    [Fact]
+    public async Task ChangePrice_SaveFails_DoesNotPublish()
+    {
+        var product = new Product(1, "Laptop", "LAP-1", 10m);
+        _products.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(product);
+        _uow.SaveChangesAsync(Arg.Any<CancellationToken>()).Returns<int>(_ => throw new InvalidOperationException("db down"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.ChangePriceAsync(1, new ChangePriceDto { Price = 15m }, CancellationToken.None));
+
+        await _publisher.DidNotReceiveWithAnyArgs().PublishAsync<ProductPriceChangedEvent>(default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task Update_OnlyNameChanged_PublishesRenamedOnly()
+    {
+        var product = new Product(1, "Laptop", "LAP-1", 10m);
+        _products.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(product);
+
+        await _sut.UpdateAsync(1, new UpdateProductDto { Name = "Laptop Pro", IsActive = true }, CancellationToken.None);
+
+        await _publisher.Received(1).PublishAsync(Arg.Is<ProductRenamedEvent>(e => e.OldName == "Laptop" && e.NewName == "Laptop Pro"),
+            "catalog-events", "product.renamed", Arg.Any<CancellationToken>());
+        await _publisher.DidNotReceiveWithAnyArgs().PublishAsync<ProductActivityChangedEvent>(default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task Publish_BrokerDown_DoesNotFailSavedOperation()
+    {
+        var product = new Product(1, "Laptop", "LAP-1", 10m);
+        _products.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(product);
+        _publisher.PublishAsync(Arg.Any<ProductPriceChangedEvent>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(_ => throw new InvalidOperationException("broker down"));
+
+        var dto = await _sut.ChangePriceAsync(1, new ChangePriceDto { Price = 20m }, CancellationToken.None);
+
+        Assert.Equal(20m, dto.Price);
     }
 }
 

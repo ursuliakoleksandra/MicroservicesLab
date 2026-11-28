@@ -81,6 +81,23 @@ IF COL_LENGTH(N'dbo.Products', N'Stock') IS NULL
     ALTER TABLE dbo.Products ADD Stock INT NOT NULL CONSTRAINT DF_Products_Stock DEFAULT 0 CONSTRAINT CK_Products_Stock CHECK (Stock >= 0);
 GO
 
+-- Лаб. 08: час останньої застосованої зміни КОЖНОГО реплікованого поля (захист від подій, що прийшли не по порядку):
+-- застаріла подія (OccurredAt <= збереженого часу) не перезаписує новіше значення.
+IF COL_LENGTH(N'dbo.Products', N'NameChangedAt') IS NULL
+    ALTER TABLE dbo.Products ADD NameChangedAt DATETIME2 NULL, PriceChangedAt DATETIME2 NULL, ActiveChangedAt DATETIME2 NULL;
+GO
+
+/* ---------- ProcessedEvents (Лаб. 08): журнал оброблених інтеграційних подій = ідемпотентність споживача ---------- */
+-- EventId — первинний ключ: повторна вставка того самого EventId дає помилку 2627 (duplicate key) → подію вже оброблено.
+-- Рядок вставляється в ТІЙ САМІЙ транзакції, що й бізнес-зміни: або є і зміни, і запис, або немає нічого.
+IF OBJECT_ID(N'dbo.ProcessedEvents', N'U') IS NULL
+CREATE TABLE dbo.ProcessedEvents (
+    EventId     UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_ProcessedEvents PRIMARY KEY,
+    EventType   NVARCHAR(100)    NOT NULL,
+    ProcessedAt DATETIME2        NOT NULL CONSTRAINT DF_ProcessedEvents_ProcessedAt DEFAULT SYSUTCDATETIME()
+);
+GO
+
 /* ---------- OrderItems: M:N  Orders <-> Products ---------- */
 IF OBJECT_ID(N'dbo.OrderItems', N'U') IS NULL
 CREATE TABLE dbo.OrderItems (

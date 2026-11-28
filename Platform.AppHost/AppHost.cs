@@ -1,5 +1,5 @@
 // Оркестрація платформи TechNest (.NET Aspire): одна команда `dotnet run --project Platform.AppHost` піднімає
-// контейнери SQL Server, MongoDB і Redis, три мікросервіси, Aggregator і Gateway та відкриває Aspire Dashboard.
+// контейнери SQL Server, MongoDB, Redis і RabbitMQ, три мікросервіси, Aggregator і Gateway та відкриває Aspire Dashboard.
 // AppHost не містить бізнес-логіки — лише опис ресурсів і залежностей між ними.
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -22,6 +22,13 @@ var reviewsDb = mongo.AddDatabase("ReviewsDb");              // Лаб. 04 (ін
 var redis = builder.AddRedis("redis")
                    .WithDataVolume();                        // кеш переживає перезапуск Redis
 
+// Лаб. 08: RabbitMQ — брокер повідомлень. WithDataVolume: черги й повідомлення переживають перезапуск контейнера;
+// WithManagementPlugin: веб-інтерфейс керування (Management UI) — exchanges, queues, bindings, DLQ (кнопка в Dashboard).
+// Ім'я "messaging" = AddRabbitMQClient("messaging") у Platform.Messaging; рядок підключення передається як ConnectionStrings:messaging.
+var messaging = builder.AddRabbitMQ("messaging")
+                       .WithDataVolume()
+                       .WithManagementPlugin();
+
 // Імена баз збігаються з іменами рядків підключення, які сервіси вже читають (ConnectionStrings:OrdersDb ...),
 // тому Aspire передає їх через WithReference — код сервісів не змінюється.
 
@@ -33,16 +40,19 @@ var ordersDbInit = builder.AddProject<Projects.Platform_DbInit>("orders-db-init"
 // Профіль запуску "https": сервіс слухає і HTTP (REST через Gateway), і HTTPS (gRPC від Aggregator, HTTP/2 через ALPN).
 var orders = builder.AddProject<Projects.Orders_Api>("orders-api", launchProfileName: "https")
     .WithReference(ordersDb).WaitFor(ordersDb)
+    .WithReference(messaging).WaitFor(messaging)             // Лаб. 08: споживач черги orders.catalog-sync
     .WaitForCompletion(ordersDbInit)                         // стартує лише після застосування схеми
     .WithHttpHealthCheck("/health", endpointName: "http");   // Лаб. 07: Dashboard показує Healthy/Degraded/Unhealthy; WaitFor чекає Healthy
 
 var catalog = builder.AddProject<Projects.Catalog_Api>("catalog-api", launchProfileName: "https")
     .WithReference(catalogDb).WaitFor(catalogDb)
     .WithReference(redis).WaitFor(redis)                     // L2-кеш
+    .WithReference(messaging).WaitFor(messaging)             // Лаб. 08: publisher подій Каталогу
     .WithHttpHealthCheck("/health", endpointName: "http");
 
 var reviews = builder.AddProject<Projects.Reviews_WebApi>("reviews-api", launchProfileName: "https")
     .WithReference(reviewsDb).WaitFor(reviewsDb)
+    .WithReference(messaging).WaitFor(messaging)             // Лаб. 08: споживач черги reviews.catalog-sync
     .WithHttpHealthCheck("/health", endpointName: "http");
 
 // ---------- Aggregator: gRPC-клієнт сервісів + кеш агрегованих відповідей у Redis ----------

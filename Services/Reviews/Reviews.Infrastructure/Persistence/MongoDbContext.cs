@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Extensions.DiagnosticSources;
+using MongoDB.Bson;
 using Reviews.Domain.Entities;
 
 namespace Reviews.Infrastructure.Persistence;
@@ -26,4 +27,8 @@ public class MongoDbContext
 
     public IMongoCollection<Review> Reviews => Database.GetCollection<Review>("reviews");
     public IMongoCollection<Discussion> Discussions => Database.GetCollection<Discussion>("discussions");
+
+    // Лаб. 08: проєкція рейтингів і журнал оброблених подій читаються/пишуться як BsonDocument (власних доменних типів немає)
+    public IMongoCollection<BsonDocument> ProductRatings => Database.GetCollection<BsonDocument>("productRatings");
+    public IMongoCollection<BsonDocument> ProcessedEvents => Database.GetCollection<BsonDocument>("processedEvents");
 }

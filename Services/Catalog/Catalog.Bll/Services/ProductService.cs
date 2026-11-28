@@ -8,6 +8,10 @@ using Catalog.Domain.Exceptions;
 using Catalog.Domain.Filters;
 using Microsoft.Extensions.Logging;
 using Platform.Caching;
+using Platform.Messaging;
+using Platform.Messaging.Events;
+using Platform.Messaging.Publishing;
+using Platform.Messaging.Topology;
 
 namespace Catalog.Bll.Services;
 
@@ -16,7 +20,7 @@ namespace Catalog.Bll.Services;
 /// Правила самої сутності (ціна &gt; 0, достатній залишок) перевіряє Product; сервіс — правила, що потребують БД
 /// (унікальність SKU, існування бренду/категорії). SaveChangesAsync викликається ОДИН раз наприкінці операції.
 /// </summary>
-public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<ProductService> logger, ITwoLevelCache cache)
+public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<ProductService> logger, ITwoLevelCache cache, IEventPublisher publisher)
     : IProductService
 {
     private const int MaxPageSize = 100;
@@ -87,6 +91,10 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
         await uow.SaveChangesAsync(ct);
         await InvalidateAsync(product.Id, "ProductCreated", ct);
 
+        // Лаб. 08: подія лише ПІСЛЯ успішного SaveChanges (інакше споживачі отримали б факт, якого в БД немає)
+        await PublishAsync(new ProductCreatedEvent(product.Id, product.Name, product.Price, product.IsActive, product.AvailableStock),
+            CatalogRoutingKeys.Created, ct);
+
         logger.LogInformation("Product {ProductId} created with SKU {Sku}", product.Id, product.Sku);
         return mapper.Map<ProductDto>(product);
     }
@@ -94,10 +102,18 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
     public async Task<ProductDto> UpdateAsync(long id, UpdateProductDto input, CancellationToken ct)
     {
         var product = await FindAsync(id, ct);
+        var oldName = product.Name;
+        var oldActive = product.IsActive;
         product.Rename(input.Name);
         product.SetActive(input.IsActive);
         await uow.SaveChangesAsync(ct);
         await InvalidateAsync(id, "ProductUpdated", ct);
+
+        // Лаб. 08: окрема подія на кожну реплікувану зміну (назва / активність) — і лише якщо значення справді змінилося
+        if (!string.Equals(oldName, product.Name, StringComparison.Ordinal))
+            await PublishAsync(new ProductRenamedEvent(id, oldName, product.Name), CatalogRoutingKeys.Renamed, ct);
+        if (oldActive != product.IsActive)
+            await PublishAsync(new ProductActivityChangedEvent(id, product.Name, product.IsActive), CatalogRoutingKeys.ActivityChanged, ct);
         return mapper.Map<ProductDto>(product);
     }
 
@@ -108,6 +124,8 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
         product.ChangePrice(input.Price);
         await uow.SaveChangesAsync(ct);
         await InvalidateAsync(id, "ProductPriceChanged", ct);
+        if (old != product.Price)
+            await PublishAsync(new ProductPriceChangedEvent(id, product.Name, old, product.Price), CatalogRoutingKeys.PriceChanged, ct);
         logger.LogInformation("Product {ProductId} price changed {OldPrice} -> {NewPrice}", id, old, product.Price);
         return mapper.Map<ProductDto>(product);
     }
@@ -118,6 +136,7 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
         product.AddStock(input.Quantity);
         await uow.SaveChangesAsync(ct);
         await InvalidateAsync(id, "StockIncreased", ct);
+        await PublishAsync(new ProductStockReplenishedEvent(id, product.Name, input.Quantity), CatalogRoutingKeys.StockReplenished, ct);
         return mapper.Map<ProductDto>(product);
     }
 
@@ -175,9 +194,11 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
     public async Task DeleteAsync(long id, CancellationToken ct)
     {
         var product = await FindAsync(id, ct);
+        var name = product.Name;
         uow.Products.Delete(product);                                                 // деталі, зображення й зв'язки — каскадом у БД
         await uow.SaveChangesAsync(ct);
         await InvalidateAsync(id, "ProductDeleted", ct);
+        await PublishAsync(new ProductDeletedEvent(id, name), CatalogRoutingKeys.Deleted, ct);
         logger.LogInformation("Product {ProductId} deleted", id);
     }
 
@@ -189,6 +210,24 @@ public sealed class ProductService(IUnitOfWork uow, IMapper mapper, ILogger<Prod
     {
         await cache.RemoveAsync(CatalogCacheKeys.Product(id), reason, ct);
         if (lists) await cache.BumpVersionAsync(CatalogCacheKeys.ProductsScope, reason, ct);
+    }
+
+    /// <summary>
+    /// Публікація інтеграційної події. Викликається лише після SaveChanges. Збій брокера не скасовує вже збережену зміну
+    /// (відповідь клієнту не перетворюється на 500), а логується з бізнес-контекстом. Надійніша схема — Transactional Outbox
+    /// (подія записується в ту саму транзакцію, окремий процес її відправляє); у цій роботі це можливе вдосконалення.
+    /// </summary>
+    private async Task PublishAsync<TEvent>(TEvent @event, string routingKey, CancellationToken ct) where TEvent : IntegrationEvent
+    {
+        try
+        {
+            await publisher.PublishAsync(@event, MessagingTopology.CatalogExchange, routingKey, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Failed to publish {EventType} {EventId} ({RoutingKey}); the change is saved in the database but not replicated. CorrelationId {CorrelationId}",
+                typeof(TEvent).Name, @event.EventId, routingKey, @event.CorrelationId);
+        }
     }
 
     private async Task<Product> FindAsync(long id, CancellationToken ct) =>

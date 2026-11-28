@@ -45,6 +45,44 @@ public sealed class ProductRepository : BaseDapperRepository<Product>, IProductR
         if (affected == 0) throw new NotFoundException($"Product {productId} not found");
     }
 
+    public async Task<bool> ApplyCatalogChangeAsync(long productId, string? name, decimal? price, bool? isActive,
+        DateTime occurredAt, CancellationToken ct = default)
+    {
+        // Кожне поле має свою «версію» (…ChangedAt). CASE застосовує нове значення лише коли подія новіша; інакше поле лишається.
+        // Умова WHERE Id = @Id: рядок «знайдено» навіть якщо всі поля застарілі — відрізняємо «немає товару» від «подія застаріла».
+        const string sql = @"
+            UPDATE dbo.Products SET
+                Name            = CASE WHEN @Name IS NOT NULL AND (NameChangedAt IS NULL OR NameChangedAt < @At) THEN @Name ELSE Name END,
+                NameChangedAt   = CASE WHEN @Name IS NOT NULL AND (NameChangedAt IS NULL OR NameChangedAt < @At) THEN @At ELSE NameChangedAt END,
+                Price           = CASE WHEN @Price IS NOT NULL AND (PriceChangedAt IS NULL OR PriceChangedAt < @At) THEN @Price ELSE Price END,
+                PriceChangedAt  = CASE WHEN @Price IS NOT NULL AND (PriceChangedAt IS NULL OR PriceChangedAt < @At) THEN @At ELSE PriceChangedAt END,
+                IsActive        = CASE WHEN @IsActive IS NOT NULL AND (ActiveChangedAt IS NULL OR ActiveChangedAt < @At) THEN @IsActive ELSE IsActive END,
+                ActiveChangedAt = CASE WHEN @IsActive IS NOT NULL AND (ActiveChangedAt IS NULL OR ActiveChangedAt < @At) THEN @At ELSE ActiveChangedAt END,
+                SyncedAt        = SYSUTCDATETIME()
+            WHERE Id = @Id;";
+        await EnsureOpenAsync(ct);
+        var affected = await Translated(() => Connection.ExecuteAsync(Command(sql,
+            new { Id = productId, Name = name, Price = price, IsActive = isActive, At = occurredAt }, ct: ct)));
+        return affected > 0;
+    }
+
+    public async Task<bool> InsertFromCatalogAsync(long productId, string name, decimal price, bool isActive, int stock,
+        DateTime occurredAt, CancellationToken ct = default)
+    {
+        // Лише INSERT, якщо рядка немає: подія product.created не перезаписує наявні дані й залишок Stock (його веде Orders).
+        const string sql = @"
+            IF NOT EXISTS (SELECT 1 FROM dbo.Products WITH (UPDLOCK, HOLDLOCK) WHERE Id = @Id)
+            BEGIN
+                INSERT INTO dbo.Products (Id, Name, Price, IsActive, Stock, NameChangedAt, PriceChangedAt, ActiveChangedAt)
+                VALUES (@Id, @Name, @Price, @IsActive, @Stock, @At, @At, @At);
+                SELECT 1;
+            END
+            ELSE SELECT 0;";
+        await EnsureOpenAsync(ct);
+        return await Translated(() => Connection.ExecuteScalarAsync<int>(Command(sql,
+            new { Id = productId, Name = name, Price = price, IsActive = isActive, Stock = stock, At = occurredAt }, ct: ct))) == 1;
+    }
+
     public async Task UpsertFromCatalogAsync(Product product, CancellationToken ct = default)
     {
         const string sql = @"

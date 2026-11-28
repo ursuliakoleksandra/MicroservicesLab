@@ -14,11 +14,13 @@ using Catalog.Api.HealthChecks;
 using Catalog.Api.Metrics;
 using Platform.Caching;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Platform.Messaging;
 using Platform.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();      // Лаб. 05: Serilog, OpenTelemetry, health checks, service discovery
+builder.AddMessaging();            // Лаб. 08: RabbitMQ (Aspire.RabbitMQ.Client), publisher, топологія, health check
 
 var connectionString = builder.Configuration.GetConnectionString("CatalogDb")
     ?? throw new InvalidOperationException("Connection string 'CatalogDb' is missing");

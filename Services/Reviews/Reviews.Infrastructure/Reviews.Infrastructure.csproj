@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Reviews.Application\Reviews.Application.csproj" />
     <ProjectReference Include="..\Reviews.Domain\Reviews.Domain.csproj" />
+    <ProjectReference Include="..\..\..\Platform.Messaging\Platform.Messaging.csproj" />
   </ItemGroup>
 </Project>

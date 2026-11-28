@@ -9,6 +9,7 @@
 | № 05 | Платформа на .NET Aspire: AppHost, ServiceDefaults (Serilog + OpenTelemetry), YARP Gateway, Aggregator | [Частина 5](#частина-5--мікросервісна-платформа-net-aspire-лаб-05) |
 | № 06 | gRPC-контракти (Protocol Buffers), кеш L1 (пам'ять) + L2 (Redis), Aggregator на gRPC | [Частина 6](#частина-6--grpc-та-кешування-лаб-06) |
 | № 07 | Resilience (retry, circuit breaker, таймаути), бізнес-метрики, health checks | [Частина 7](#частина-7--resilience-метрики-та-health-checks-лаб-07) |
+| № 08 | Асинхронна взаємодія: RabbitMQ, інтеграційні події, ідемпотентні споживачі, retry/DLQ, трасування через брокер | [Частина 8](#частина-8--асинхронна-взаємодія-rabbitmq-лаб-08) |
 
 # Частина 1 — три бази даних (Лаб. 01)
 
@@ -46,6 +47,8 @@ db/p2/                     schema.sql · seed.sql                               
 db/p3/                     collections.js · seed.js · queries.js                   (ReviewsDb, MongoDB)
 Platform.slnx              одне рішення на всю платформу
 Platform.AppHost/          оркестрація .NET Aspire (AppHost.cs)
+Platform.Messaging/        (Лаб. 08) події, publisher, топологія RabbitMQ, consumer (BackgroundService), трасування
+Platform.Messaging.Tests/  (Лаб. 08) unit-тести подій і топології
 Services/Orders/           мікросервіс «Замовлення» (Проєкт №1)
     Orders.Api/            контролери, Program.cs, appsettings.json, обробка помилок
     Orders.Bll/            сервіси, DTO, профілі AutoMapper
@@ -1403,3 +1406,127 @@ curl -s <адреса-catalog-api>/health/ready                                 
 * **Кардинальність.** Кожна унікальна комбінація тегів — окремий часовий ряд; Id користувачів створюють мільйони рядів і перевантажують сховище метрик.
 * **Liveness vs readiness.** Liveness: чи живий процес (збій → перезапуск); readiness: чи готовий приймати трафік (збій → виключення з балансування без перезапуску).
 * **Чому Redis → Degraded.** Кеш необов'язковий: без нього сервіс працює (повільніше), тож робити його Unhealthy означало б безпідставно виключити здоровий екземпляр.
+
+
+# Частина 8 — асинхронна взаємодія: RabbitMQ (Лаб. 08)
+
+Каталог — власник даних про товар. Зміни, потрібні іншим сервісам, він публікує як **інтеграційні події**; Замовлення й Відгуки
+підписуються на них і оновлюють свої копії (політика дублювання, `docs/duplication-policy.md`). Сервіси не знають одне про одного, а збій
+споживача не блокує Каталог.
+
+## 55. Топологія брокера
+
+```
+                        ┌─ "product.*"  ───────────► orders.catalog-sync   ─┐ reject / retry вичерпано
+catalog-events (topic) ─┤                                                   ├──► catalog-events.dlx (direct) ──► <черга>.dlq
+                        └─ "product.renamed" ──────► reviews.catalog-sync  ─┘
+```
+
+| Об'єкт | Параметри |
+|--------|-----------|
+| `catalog-events` | exchange **topic**, durable. Routing keys: `product.created`, `product.price_changed`, `product.renamed`, `product.activity_changed`, `product.stock_replenished`, `product.deleted` |
+| `orders.catalog-sync` | durable; binding `product.*`; `x-dead-letter-exchange = catalog-events.dlx`, `x-dead-letter-routing-key = <ім'я черги>` |
+| `reviews.catalog-sync` | durable; binding `product.renamed` (відгукам потрібна лише назва); ті самі аргументи DLX |
+| `catalog-events.dlx` | exchange **direct**, durable: routing key = ім'я черги → кожна DLQ отримує лише свої повідомлення |
+| `orders.catalog-sync.dlq`, `reviews.catalog-sync.dlq` | durable; прив'язані до DLX |
+
+* **Окрема черга на кожен сервіс-споживач**: якби черга була спільна, повідомлення дісталося б одному з сервісів (competing consumers), а не обом.
+* **Декларація в коді** (`MessagingTopology.DeclareAsync`) виконується під час старту *і* publisher-ом, *і* споживачами; повторне оголошення з тими самими параметрами безпечне.
+  Publisher теж оголошує черги: якщо подію опублікувати до першого запуску споживача, exchange без bindings її відкинув би.
+* **AppHost:** `AddRabbitMQ("messaging").WithDataVolume().WithManagementPlugin()` — дані брокера переживають перезапуск, Management UI відкривається з Dashboard
+  (логін/пароль — параметри ресурсу `messaging-password` у Dashboard). Усі три сервіси мають `WithReference(messaging).WaitFor(messaging)`.
+* **Підключення:** `builder.AddRabbitMQClient("messaging")` (`Aspire.RabbitMQ.Client`, RabbitMQ.Client 7.x) реєструє `IConnection` як singleton і health check;
+  API повністю асинхронний (`CreateChannelAsync`, `BasicPublishAsync`, `BasicConsumeAsync`). Додатково `rabbitmq-connection` (Degraded) у readiness.
+
+## 56. Події та публікація
+
+* Базовий `IntegrationEvent` (record): `EventId`, `OccurredAt`, `CorrelationId` (з `CorrelationContext` — з HTTP-запиту або повідомлення), `SchemaVersion`.
+  Події — незмінні `record` з `init` і **самодостатні**: `ProductPriceChangedEvent(ProductId, ProductName, OldPrice, NewPrice)` — споживач не ходить до Каталогу по додаткові дані.
+* `IEventPublisher` (`RabbitMqEventPublisher`): JSON camelCase (`JsonDefaults`), `BasicProperties`: `Persistent = true`, `ContentType = application/json`, `MessageId = EventId`,
+  `Type = <ім'я події>`, заголовки `x-correlation-id`, `x-schema-version`; лог кожної публікації; Activity `Producer` + W3C `traceparent` у заголовках.
+* **Лише після `SaveChanges`.** У `ProductService` публікація стоїть після `uow.SaveChangesAsync` (тест `ChangePrice_SaveFails_DoesNotPublish`). Подія створюється лише за реальної зміни
+  (`UpdateAsync` публікує `Renamed` / `ActivityChanged` тільки для змінених полів). Збій брокера **не скасовує** вже збережену зміну — логується з EventId і CorrelationId.
+  Ця схема має вікно неузгодженості (збереглося в БД, але не опубліковано); надійне рішення — **Transactional Outbox** (подія в тій самій транзакції + окремий процес відправки) — як подальше вдосконалення.
+
+## 57. Споживання
+
+`RabbitMqEventConsumer` — `BackgroundService`: канал, топологія, `BasicQos(prefetchCount: 10)`, `AsyncEventingBasicConsumer`, `BasicConsumeAsync(autoAck: false)`.
+Зупинка — через `stoppingToken`: канал закривається, непідтверджені повідомлення повертаються в чергу. Кожне повідомлення обробляється у власному DI-scope.
+
+| Ситуація | Реакція |
+|----------|---------|
+| Успіх / дубль / подія застаріла | `Ack` |
+| Невалідний JSON, відсутні обов'язкові поля, `SchemaVersion` новіша за підтримувану, `PermanentFailureException` | `Nack(requeue: false)` → DLX → DLQ **без повторів** |
+| Тимчасовий збій (БД недоступна, товар ще не реплікований) | повторна публікація копії в **ту саму** чергу з `x-retry-count + 1` і `Ack` оригіналу; пауза `1 с × номер спроби` |
+| `x-retry-count` ≥ максимуму (3) | `Nack(requeue: false)` → DLQ |
+| Невідомий тип події | `Ack` + попередження (сервіс на неї не підписаний) |
+
+Повтор іде в ту саму чергу через default exchange (`routingKey = ім'я черги`), а не в `catalog-events` — інакше копію отримали б усі споживачі. Заголовок повідомлення, повернутого через `requeue`, змінити
+не можна, тому лічильник спроб ведеться повторною публікацією. Кожне рішення логується (EventId, тип, CorrelationId, черга, номер спроби). Глибина DLQ — метрика `messaging.dlq.depth`.
+
+## 58. Ідемпотентність і реплікація
+
+Доставка «щонайменше один раз» → дублі неминучі. Тому кожен споживач ідемпотентний.
+
+**Orders (SQL Server).** Таблиця `dbo.ProcessedEvents(EventId PRIMARY KEY, EventType, ProcessedAt)`. Базовий клас `CatalogEventHandlerBase` в **одній транзакції Unit of Work**:
+`BEGIN → ProcessedEvents.TryAddAsync(EventId) → зміна Products → COMMIT`. Дубль → помилка `2627` на PRIMARY KEY → `false` → `ROLLBACK`, `HandlingResult.Duplicate`.
+Збій після запису про обробку відкотить і сам запис, тож повтор не вважається дублем. Окремий клас-обробник на кожен тип події: `ProductCreatedHandler`, `ProductPriceChangedHandler`,
+`ProductRenamedHandler`, `ProductActivityChangedHandler`, `ProductStockReplenishedHandler`, `ProductDeletedHandler`.
+
+**Reviews (MongoDB).** `ProductRenamedHandler` оновлює `productName` у **всіх** документах товару: `reviews`, `discussions`, `productRatings` (`UpdateMany` / `UpdateOne`).
+Журнал — колекція `processedEvents` з `_id = EventId` (унікальність дає сам `_id`; TTL 30 діб). MongoDB у режимі standalone (Aspire) не має багатодокументних транзакцій, тому порядок:
+перевірка журналу → `$set` (операція «встановити значення» ідемпотентна за природою) → запис у журнал. Збій між кроками лише призводить до повторного безпечного `$set`.
+
+**Що реплікується (політика дублювання):** `OrdersDb.Products` (Name, Price, IsActive, Stock) — довідник для нових замовлень. **Знімки `OrderItems.ProductName / UnitPrice` не змінюються** —
+оформлене замовлення зберігає ціну на момент покупки. Видалення в Каталозі → `IsActive = false` у Orders (рядок потрібен для FOREIGN KEY історії замовлень).
+
+**Порядок подій.** Поля `NameChangedAt`, `PriceChangedAt`, `ActiveChangedAt` (Orders) і `productNameChangedAt` (Reviews) зберігають `OccurredAt` останньої застосованої зміни;
+застаріла подія нового значення не перезаписує. Подія, що прийшла раніше за `product.created`: `price_changed` створює копію з власних даних, `renamed` / `activity_changed` — тимчасовий збій (повтор).
+
+## 59. Трасування й логування
+
+* Продюсер створює Activity `catalog-events publish` (`ActivityKind.Producer`) з тегами `messaging.system`, `messaging.destination.name`, `messaging.rabbitmq.destination.routing_key`, `messaging.message.id`
+  і вкладає W3C `traceparent` / `tracestate` у заголовки (`TraceContextPropagation.Inject`).
+* Споживач витягує контекст (`Extract`) і створює Activity `Consumer` (`<черга> process`) з тегами `messaging.*` як **дочірню** до publish — в Aspire Dashboard це один trace:
+  `HTTP PUT /api/products/{id}/price → catalog-events publish → orders.catalog-sync process → SQL`.
+* `ActivitySource` **`Platform.Messaging`** додано в `ServiceDefaults` (`AddSource("Platform.Messaging")`), метрики — `AddMeter("Platform.Messaging")`.
+* Структурований лог збоїв містить бізнес-контекст: `EventId`, тип події, `ProductId`, `CorrelationId`, чергу, номер спроби (`LogContext` + параметри шаблону).
+
+## 60. Перевірка (сценарії для захисту)
+
+1. Запустити AppHost, відкрити Management UI (`messaging` у Dashboard) → вкладка **Exchanges / Queues**: `catalog-events`, `catalog-events.dlx`, черги й `.dlq`.
+2. `PUT /api/products/{id}/price` у Каталозі → у Dashboard (Traces) один trace із `publish` і `process`; `SELECT Price FROM Products` в OrdersDb змінилась, `OrderItems.UnitPrice` — ні.
+3. `PUT /api/products/{id}` (нова назва) → `productName` оновлено у `reviews`, `discussions`, `productRatings` (`db.reviews.find({productId: …})`).
+4. **Дубль:** у Management UI опублікувати те саме повідомлення вдруге (з тим самим `message_id` і тілом із тим самим `eventId`) → лог `Duplicate … skipped`, запис у `ProcessedEvents` один.
+5. **Постійний збій:** у Management UI опублікувати в `catalog-events` з ключем `product.price_changed` тіло `{ not json` → одразу в `orders.catalog-sync.dlq` (Get messages), без повторів.
+6. **Тимчасовий збій:** зупинити контейнер SQL Server, змінити ціну → у логах Orders `retry 1/3 … 3/3`, потім повідомлення в DLQ; після запуску бази — «Shovel»/повторна публікація з DLQ вручну.
+7. Зупинити Orders, змінити ціну кілька разів, запустити Orders → накопичені повідомлення оброблено (черга durable).
+
+## 61. Відповідність критеріям Лаб. 08
+
+| Критерій | Де |
+|----------|----|
+| RabbitMQ в AppHost з volume і Management UI, reference для сервісів | `Platform.AppHost/AppHost.cs` |
+| `AddRabbitMQClient("messaging")`, `IConnection`, health check, async API | `Platform.Messaging/MessagingExtensions.cs` |
+| Топологія: topic exchange, черги на сервіс, bindings, DLX/DLQ | `Platform.Messaging/Topology/MessagingTopology.cs` |
+| Незмінні події з `EventId`, `CorrelationId` | `Platform.Messaging/Events/` |
+| `IEventPublisher`, persistent JSON, `MessageId`, `Type`, `x-correlation-id`, логування | `Platform.Messaging/Publishing/` |
+| Публікація після `SaveChanges` | `Catalog.Bll/Services/ProductService.cs` |
+| Consumer — `BackgroundService`, ручний Ack, `BasicQos`, graceful stop | `Platform.Messaging/Consuming/RabbitMqEventConsumer.cs` |
+| Ack / `Nack(requeue:false)` для постійних збоїв | там само, розділ 57 |
+| Ідемпотентні обробники, ProcessedEvents з унікальним ключем у транзакції | `Orders.Bll/Messaging/`, `db/p1/schema.sql`, `Reviews.Infrastructure/Messaging/` |
+| Реплікація за політикою дублювання (Orders.Products; productName в усіх документах Reviews) | розділ 58 |
+| Retry з `x-retry-count` і максимумом, DLQ | `RabbitMqEventConsumer.RetryOrDeadLetterAsync` |
+| Trace context через брокер, `Platform.Messaging` у ServiceDefaults | `Telemetry/TraceContextPropagation.cs`, `Extensions.cs` |
+| Структурований лог збоїв із контекстом | розділ 59 |
+
+## 62. Контрольні питання (коротко)
+
+* **Чому події, а не синхронні виклики.** Слабка зв'язність, сервіси не блокують один одного, споживач може бути тимчасово недоступний; ціна — eventual consistency.
+* **Topic vs direct vs fanout.** Topic маршрутизує за шаблоном (`product.*`), direct — за точним ключем, fanout — усім чергам.
+* **Навіщо DLX/DLQ.** Повідомлення, що не вдалося обробити, не губляться і не блокують чергу — їх можна розслідувати й повторити.
+* **Ack / Nack.** Ack — «оброблено» (брокер видаляє); Nack з `requeue: false` — відхилити (→ DLX); без підтвердження повідомлення повертається в чергу при закритті каналу.
+* **Чому ідемпотентність.** Доставка «щонайменше раз»: після збою між обробкою й Ack повідомлення прийде знову; `ProcessedEvents` робить повторну обробку безпечною.
+* **Чому запис про обробку в тій самій транзакції.** Інакше можливі «подія позначена, а зміни нема» (втрата) або «зміна є, позначки нема» (подвійне застосування).
+* **Outbox.** Подія записується в таблицю тією ж транзакцією, що й зміна даних, а окремий процес її відправляє — усуває вікно між `SaveChanges` і публікацією.
+* **Out-of-order.** Версія кожного поля (час події): застаріла подія не перезаписує новіше значення.

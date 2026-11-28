@@ -33,7 +33,7 @@ public static class Extensions
     private static readonly string[] CacheMeters = ["Catalog.Cache", "Aggregator.Cache"];
 
     /// <summary>Бізнес-метрики сервісів (Лаб. 07, ч. 2): один Meter на сервіс, ім'я = назва сервісу.</summary>
-    private static readonly string[] BusinessMeters = ["Orders.Api", "Catalog.Api", "Reviews.Api", "Platform.Aggregator"];
+    private static readonly string[] BusinessMeters = ["Orders.Api", "Catalog.Api", "Reviews.Api", "Platform.Aggregator", "Platform.Messaging"];
 
     private static readonly string[] CustomActivitySources = ["Orders.Api", "Catalog.Api", "Reviews.WebApi", "Platform.Aggregator"];
 
@@ -152,6 +152,7 @@ public static class Extensions
                         : new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio)))
                     .AddSource(builder.Environment.ApplicationName)
                     .AddSource(CustomActivitySources)                                         // власні spans (ч. 3.3)
+                    .AddSource("Platform.Messaging")                                          // Лаб. 08: Publish / Consume spans RabbitMQ
                     .AddSource("MongoDB.Driver.Core.Extensions.DiagnosticSources")            // MongoDB (Лаб. 04)
                     .AddAspNetCoreInstrumentation(o => o.Filter = ctx =>
                         !ctx.Request.Path.StartsWithSegments(HealthEndpointPath)

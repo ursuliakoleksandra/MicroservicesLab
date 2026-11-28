@@ -3,7 +3,11 @@ using Orders.Api.GrpcServices;
 using Orders.Api.HealthChecks;
 using Orders.Api.Metrics;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Platform.Messaging;
+using Platform.Messaging.Events;
+using Platform.Messaging.Topology;
 using Platform.ServiceDefaults;
+using Orders.Bll.Messaging;
 using Orders.Bll.Mapping;
 using Orders.Bll.Services;
 using Orders.Dal;
@@ -12,6 +16,7 @@ using Orders.Dal.Interfaces;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();      // Лаб. 05: Serilog, OpenTelemetry, health checks, service discovery
+builder.AddMessaging();            // Лаб. 08: RabbitMQ (Aspire.RabbitMQ.Client), топологія, health check
 
 // Рядок підключення береться з appsettings.json і перевизначається змінною оточення
 // ConnectionStrings__OrdersDb (саме так його передає .NET Aspire через WithReference).
@@ -23,6 +28,16 @@ builder.Services.AddScoped<IUnitOfWork>(_ => new UnitOfWork(connectionString));
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IProductService, ProductService>();
+
+// ---------- Лаб. 08: споживач черги orders.catalog-sync — реплікація довідника товарів з Каталогу ----------
+// Окремий обробник на кожен тип події; кожен працює в scope повідомлення з власним Unit of Work.
+builder.Services.AddEventConsumer(MessagingTopology.OrdersQueue, registry => registry
+    .Handle<ProductCreatedEvent, ProductCreatedHandler>()
+    .Handle<ProductPriceChangedEvent, ProductPriceChangedHandler>()
+    .Handle<ProductRenamedEvent, ProductRenamedHandler>()
+    .Handle<ProductActivityChangedEvent, ProductActivityChangedHandler>()
+    .Handle<ProductStockReplenishedEvent, ProductStockReplenishedHandler>()
+    .Handle<ProductDeletedEvent, ProductDeletedHandler>());
 
 // ---------- AutoMapper: усі профілі зібрано централізовано в Orders.Bll ----------
 builder.Services.AddAutoMapper(cfg =>
